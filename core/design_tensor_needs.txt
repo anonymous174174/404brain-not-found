@@ -1,0 +1,99 @@
+Rustworkx Graph Context Manager: For efficient graph construction and traversal.
+
+Cython: For optimizing Python-level bottlenecks, especially the backward pass traversal.
+
+torch.Tensor._make_subclass: For leveraging PyTorch's highly optimized C++/CUDA kernels for numerical operations.
+
+
+
+make 
+
+cdef class for Operation (and CustomTensor if possible): If you can define your Operation base class and its subclasses as cdef class in Cython
+
+
+
+Batching Graph Updates: This is an advanced technique. Instead of adding nodes/edges one by one, collect them into lists and then use Rustworkx's bulk add_nodes_from() and add_edges_from() methods. This would require your Operation and CustomTensor constructors to return the graph update instructions rather than executing them directly, and then a central "graph builder" function would process these in batches.
+
+
+
+Reference Cycles and Garbage Collection:
+
+The Bottleneck: Your graph structure (CustomTensor referring to Operation, Operation referring to CustomTensors) will inevitably create reference cycles. Python's reference counting won't collect these. The garbage collector (GC) will need to run periodically to detect and collect these cycles. If your graph gets very large and GC runs frequently, it can introduce pauses.
+
+Addressing It:
+
+weakref: For parent-to-child references in the graph (e.g., Operation referencing its inputs), you might use weakref where appropriate to break cycles. However, for a backward pass, you need strong references to traverse the graph, so this is more about careful design.
+
+Explicit Graph Clearing: After each backward() pass (or at the end of a training step), ensure your graph references are explicitly severed (e.g., set tensor.operation = None, clear the Operation.inputs lists for tensors that no longer require gradients). This allows Python's GC to collect them more easily.
+
+
+Graph reference based bottleneck (dynamic computational graph)
+Let's break down your questions in detail.
+
+Question 1: Reference Cycles and Garbage Collection
+You've identified a critical, subtle, and often overlooked performance aspect of building complex data structures in Python: reference cycles and their interaction with Python's garbage collector (GC).
+
+1. Python's Primary Garbage Collection: Reference Counting
+How it Works: The primary mechanism Python (specifically CPython, the standard interpreter) uses to manage memory is reference counting. Every Python object has a counter that tracks how many "references" (variables, elements in lists/dictionaries, attributes of other objects) point to it.
+
+Automatic Deallocation: When an object's reference count drops to zero, it means no part of your program can access that object anymore. Python immediately deallocates the memory occupied by that object. This is fast and efficient.
+
+2. The Problem: Reference Cycles
+Definition: A reference cycle occurs when two or more objects refer to each other in a way that creates a closed loop, meaning their reference counts never drop to zero, even if they are no longer accessible from the rest of your program.
+
+Example in Your Autograd:
+
+Your CustomTensor has an operation attribute that points to an Operation object.
+
+Your Operation object has an inputs attribute (a list of CustomTensors) and an output attribute (a CustomTensor).
+
+Consider a simple Add operation:
+
+c = a + b
+
+Here, c (a CustomTensor) refers to the Add Operation via c.operation.
+
+The Add Operation refers to a and b (both CustomTensors) via Add.inputs.
+
+The Add Operation also refers to c (the CustomTensor) via Add.output.
+
+This creates a cycle: c -> Add_Op -> c.
+
+Why Reference Counting Fails: If the only remaining references to c and Add_Op are within this cycle, their reference counts will never reach zero. They will effectively "leak" memory, even though your program is done with them.
+
+3. Python's Solution: The Generational Garbage Collector (GC)
+How it Works: To handle reference cycles, Python has a secondary, more complex garbage collector. This GC runs periodically (or when memory thresholds are met).
+
+Cycle Detection: It traverses the graph of objects in memory, looking for groups of objects that have non-zero reference counts but are unreachable from the "root" objects (like global variables, local variables on the stack, etc.). If such a cycle is found, it breaks the cycle by effectively decrementing the reference counts of objects within the cycle, allowing them to be collected.
+
+Generational Approach: Python's GC is "generational," meaning it categorizes objects into "generations" based on how long they've been alive. Newer objects are collected more frequently because they are more likely to become garbage quickly. Older, long-lived objects are checked less often, as they're less likely to be part of a newly formed cycle.
+
+4. The Bottleneck: GC Pauses
+Impact on Performance: When the GC runs, it essentially pauses your program's execution to perform its cycle detection and cleanup.
+
+"Pauses": For very large computational graphs (which is common in deep learning), the GC might take a significant amount of time to traverse and clean up memory. These pauses can introduce unpredictable latency and reduce the overall throughput of your training loop, even if your forward/backward passes are highly optimized. This is particularly noticeable in real-time or low-latency applications.
+
+Frequency: If memory is being allocated and released rapidly (as in a training loop), and cycles are constantly being created, the GC might run more frequently, leading to more frequent pauses.
+
+5. Addressing It: weakref and Explicit Graph Clearing
+weakref:
+
+Concept: A weakref (weak reference) is a reference to an object that does not increase its reference count. If the only remaining references to an object are weak references, the object can still be garbage collected.
+
+Application: In your autograd, you could use weakref for "parent-to-child" links if those links don't need to prevent the child from being collected. For instance, an Operation might store a weak reference to its output CustomTensor if the CustomTensor is always strongly referenced elsewhere (e.g., by the user's variable or the next operation in the chain).
+
+Limitation: As stated, for the backward pass, you need strong references to ensure that all necessary intermediate tensors and operations are kept alive until their gradients are computed. Using weakref for the Operation.inputs or Operation.output links during graph construction would break the graph, making backprop impossible. So, while weakref is a general GC tool, its direct application within the core autograd graph during active computation is limited. It's more useful for auxiliary data structures or caches that refer to graph nodes without owning them.
+
+Explicit Graph Clearing (Highly Recommended for Custom Autograd):
+
+Concept: This is a proactive approach. Instead of waiting for Python's GC to find cycles, you explicitly break the cycles yourself when you know the graph is no longer needed.
+
+How to Do It: After each backward() pass (or at the end of a training step), you would traverse the graph and:
+
+Set tensor.operation = None for all CustomTensors that were part of the computation.
+
+Clear op.inputs = [] and op.output = None for all Operation objects.
+
+Set tensor.grad = None (or reset it to zero) as needed.
+
+Impact: By nullifying these references, you break the cycles, allowing Python's primary reference counting system to immediately collect most of the objects. This reduces the burden on the generational GC, minimizing its run frequency and the associated pauses. PyTorch's native autograd does something similar internally to release graph resources after backward().
