@@ -7,7 +7,23 @@ class Tensor(torch.Tensor):
         super().__init__(*args, **kwargs)
         
 882e32
+"""
+for an autograd if i want to do something similar
 
+1. Creating a graph context manager class
+
+2. for first fowrward pass create the tensors in memory
+
+3. after the graph is created and temporary tensors are in place
+
+4. at each backward pass instead of deleting the temp tensors created due to operations modify their attributes in memory instead
+
+5. store the result of toposort and keep using that for every backward pass
+
+6. after calling gradfn for a node reset it's gradiants to 0 within the same loop
+
+7. profit
+"""
 
 
 class CustomTensor(torch.Tensor):
@@ -43,7 +59,11 @@ class CustomTensor(torch.Tensor):
             # This is crucial for returning CustomTensor instances from operations
             # that produce new torch.Tensors.
             _tensor = _tensor.detach()
-            instance = torch.Tensor._make_subclass(cls, _tensor, requires_grad)
+            instance = torch.Tensor._make_subclass(cls, _tensor)#, requires_grad)
+            # instance.requires_grad=requires_grad
+            instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
+            # instance.grad = None  # Initialize gradient
+            # instance.operation = operation # Store the operation that created this tensor
         else:
             # Otherwise, create a new torch.Tensor from the provided data
             # and then wrap it.
@@ -54,21 +74,95 @@ class CustomTensor(torch.Tensor):
             # that wraps the underlying torch.Tensor data.
             # We explicitly set requires_grad for the underlying torch.Tensor to False
             # because we are building a custom autograd system.
-            instance = torch.Tensor._make_subclass(cls, data, requires_grad=False)
+            instance = torch.Tensor._make_subclass(cls, data)
+            instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
 
-        instance.requires_grad = requires_grad
-        instance.grad = None  # Initialize gradient
-        instance.operation = operation # Store the operation that created this tensor
+        instance._custom_requires_grad = requires_grad
+        # instance.grad = None  # Initialize gradient
+        # instance.operation = operation # Store the operation that created this tensor
         return instance
+    def __matmul__(self,other):
+        if not isinstance(other, CustomTensor):
+            raise TypeError("CustomTensor can only be multiplied by another CustomTensor or a compatible type.")
+        output = super().__matmul__(other)
+        if other._custom_requires_grad or self._custom_requires_grad:
+            def _matmulbackward():
+                if self._custom_requires_grad:
+                    if self.grad is None:
+                        self.grad = CustomTensor(_tensor=torch.zeros(self.shape),requires_grad=False)
+                    self.grad += output.grad @ other.T
+                if other._custom_requires_grad:
+                    if other.grad is None:
+                        other.grad = CustomTensor(_tensor=torch.zeros(other.shape),requires_grad=False)
+                    other.grad += output.grad.T @ self
 
+            output._custom_backward = _matmulbackward
+        return output
     def __repr__(self):
         # Custom representation for better debugging
-        return f"CustomTensor({super().__repr__()}, requires_grad={self.requires_grad}, grad={self.grad})"
-
+        return f"CustomTensor({super().__repr__()}, requires_grad={self._custom_requires_grad}, grad={self.grad})"
+    
     def zero_grad(self):
         """Zeros out the gradient of this tensor."""
         if self.grad is not None:
-            self.grad.zero_()
+            self.grad = CustomTensor(_tensor=torch.zeros(self.shape)) #torch.zeros_like(self.grad,requires_grad=False) # the gradient attribute must be a pytorch tensor
+
+
+            #self.grad.zero_()
+    # def __add__(self,other):
+    #   output = super().__add__(other)
+    #   def _addbackward():
+    #     if self._custom_requires_grad:
+    #       if not self._custom_grad:
+    #         self._custom_grad = torch.zeros_like(self)
+    #       self._custom_grad+=output._custom_grad
+    #     if other._custom_requires_grad:
+    #       if not other._custom_grad:uo
+    #         other._custom_grad = torch.zeros_like(other)
+    #       other._custom_grad+=output._custom_grad
+    #   output._custom_backward=_addbackward
+    #   return output
+    def __add__(self,other):
+      if not isinstance(other, CustomTensor):
+          raise TypeError("CustomTensor can only be added to another CustomTensor or a compatible type.")
+      output = super().__add__(other)
+      if other._custom_requires_grad or self._custom_requires_grad:
+        def _addbackward():
+            if self._custom_requires_grad:
+                if self.grad is None:
+                    self.grad = CustomTensor(_tensor=torch.zeros(self.shape),requires_grad=False)
+                    #torch.zeros_like(self,requires_grad=False,)#self.grad.zero_()#torch.zeros(self.shape,requires_grad=False) # the gradient attribute msut be a pytorch tensor 
+                self.grad+=output.grad
+            if other._custom_requires_grad:
+                if other.grad is None:
+                    other.grad = CustomTensor(_tensor=torch.zeros(other.shape),requires_grad=False)#torch.zeros_like(other)#other.grad.zero_()#torch.zeros(self.shape,requires_grad=False) # the gradient attribute msut be a pytorch tensor 
+                other.grad+=output.grad
+    
+        output._custom_backward=_addbackward
+      return output
+    
+    def __radd__(self, other):
+        return self + other
+    
+    def __mul__(self, other):
+        if not isinstance(other, CustomTensor):
+            raise TypeError("CustomTensor can only be multiplied by another CustomTensor or a compatible type.")
+        output = super().__mul__(other)
+        if other._custom_requires_grad or self._custom_requires_grad:
+            def _mulbackward():
+                if self._custom_requires_grad:
+                    if self.grad is None:
+                        self.grad = CustomTensor(_tensor=torch.zeros(self.shape),requires_grad=False)
+                    self.grad += output.grad * other
+                if other._custom_requires_grad:
+                    if other.grad is None:
+                        other.grad = CustomTensor(_tensor=torch.zeros(other.shape),requires_grad=False)
+                    other.grad += output.grad * self
+
+            output._custom_backward = _mulbackward
+        return output
+    def __rmul__(self, other):
+        return self * other
 
     def backward(self, grad_output=None):
         """

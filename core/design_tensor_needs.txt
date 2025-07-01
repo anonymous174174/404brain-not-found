@@ -97,3 +97,8 @@ Clear op.inputs = [] and op.output = None for all Operation objects.
 Set tensor.grad = None (or reset it to zero) as needed.
 
 Impact: By nullifying these references, you break the cycles, allowing Python's primary reference counting system to immediately collect most of the objects. This reduces the burden on the generational GC, minimizing its run frequency and the associated pauses. PyTorch's native autograd does something similar internally to release graph resources after backward().
+
+
+
+
+A Graph Builder Class which handles graph building 
