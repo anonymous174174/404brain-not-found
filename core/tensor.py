@@ -179,6 +179,7 @@ class CustomTensor(torch.Tensor):
             _tensor (torch.Tensor, optional): An existing torch.Tensor to wrap.
                                               If provided, 'data' is ignored.
         """
+        dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
         if _tensor is not None:
             # If an existing torch.Tensor is provided, wrap it directly
             # This is crucial for returning CustomTensor instances from operations
@@ -196,7 +197,7 @@ class CustomTensor(torch.Tensor):
             # Otherwise, create a new torch.Tensor from the provided data
             # and then wrap it.
             if not isinstance(data, torch.Tensor):
-                data = torch.as_tensor(data, dtype=torch.float32,device=device) # Ensure float type
+                data = torch.as_tensor(data, dtype=dtype,device=device) # Ensure float type
 
             # Use torch.Tensor._make_subclass to create an instance of CustomTensor
             # that wraps the underlying torch.Tensor data.
@@ -206,12 +207,12 @@ class CustomTensor(torch.Tensor):
             instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
 
         instance._custom_requires_grad = requires_grad
-        instance.dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
+        #instance.dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
         instance.node_id = graph.add_tensor(instance) if requires_grad else None # Add to the autograd graph if requires_grad is True
         instance._is_leaf = _is_leaf
 
         # instance.grad = None  # Initialize gradient
-        # instance.operation = operation # Store the operation that created this tensor
+        instance.operation = operation # Store the operation that created this tensor
         return instance
     def __matmul__(self,other):
         if not isinstance(other, CustomTensor):
@@ -240,20 +241,7 @@ class CustomTensor(torch.Tensor):
             self.grad = CustomTensor(_tensor=torch.zeros(self.shape)) #torch.zeros_like(self.grad,requires_grad=False) # the gradient attribute must be a pytorch tensor
 
 
-            #self.grad.zero_()
-    # def __add__(self,other):
-    #   output = super().__add__(other)
-    #   def _addbackward():
-    #     if self._custom_requires_grad:
-    #       if not self._custom_grad:
-    #         self._custom_grad = torch.zeros_like(self)
-    #       self._custom_grad+=output._custom_grad
-    #     if other._custom_requires_grad:
-    #       if not other._custom_grad:uo
-    #         other._custom_grad = torch.zeros_like(other)
-    #       other._custom_grad+=output._custom_grad
-    #   output._custom_backward=_addbackward
-    #   return output
+
     def __add__(self,other):
       if not isinstance(other, CustomTensor):
           raise TypeError("CustomTensor can only be added to another CustomTensor or a compatible type.")

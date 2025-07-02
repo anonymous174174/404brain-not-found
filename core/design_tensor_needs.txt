@@ -125,3 +125,209 @@ my reasoning tells me the graph for the first is more inefficient because of mor
 is torch as efficient for both? (given torch is eager i think no)
 
 for autograd that i am building(for learning) should i consider building this optimization? the math involved doesn't seem trivial to be honest
+
+
+
+a= CustomTensor
+b=custom tensor
+c=4*a+b
+d=c*b+a 
+e=c*d+b 
+f=e+d*5.5
+
+initialize a and b as leaf tensors and pass the tensor references to rustworkx digraph as weak references
+4*a operation creates a intermediate tensor which is passed as a strong reference to rustworkx digraph
+again all intermediate tensors  cretaed are added to rustworkx digraph as strong references including c d e f 
+but any returned tensors due to the operations are returned as weaktensor references
+for tensors which are returned by the super.__init__ pytorch method how it creates needs to be verified but custom requires grad for them all must be set to True
+backward function must be defined within the __init__ method and passed to the self.operation variable of the created tensor by super.__init__
+apply toposort on the rustworkx graph and return the tensor references in the function 
+apply self.operation in a loop over those references. clear the digraph after the backward pass and all the tesnors except leaf tensors should be gone
+
+
+please note the code doesn't implement what is described above and is wrong and is just there to clarify how the classes would look like 
+only give feedback regarding the approach and no code
+graph = CustomAutogradGraph() # Global instance of the autograd graph
+graph._is_active =  True
+class CustomTensor(torch.Tensor):
+
+    def __new__(cls, data=None, requires_grad=False, operation=None, _tensor=None,_is_leaf=False,dtype=None,device=device):
+
+        dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
+        if _tensor is not None:
+
+            _tensor = _tensor.detach()
+          
+            instance = torch.Tensor._make_subclass(cls, _tensor)#, requires_grad)
+
+            instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
+
+        else:
+
+            if not isinstance(data, torch.Tensor):
+                data = torch.as_tensor(data, dtype=dtype,device=device) # Ensure float type
+
+
+            instance = torch.Tensor._make_subclass(cls, data)
+            instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
+
+        instance._custom_requires_grad = requires_grad
+        #instance.dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
+        instance.node_id = graph.add_tensor(instance) if requires_grad else None # Add to the autograd graph if requires_grad is True
+        instance._is_leaf = _is_leaf
+
+    
+        instance.operation = operation # Store the operation that created this tensor
+        return instance
+
+    def __add__(self,other):
+      if not isinstance(other, CustomTensor):
+          raise TypeError("CustomTensor can only be added to another CustomTensor or a compatible type.")
+      output = super().__add__(other)
+      if other._custom_requires_grad or self._custom_requires_grad:
+        def _addbackward():
+            if self._custom_requires_grad:
+                if self.grad is None:
+                    self.grad = CustomTensor(_tensor=torch.zeros(self.shape),requires_grad=False)
+                    #torch.zeros_like(self,requires_grad=False,)#self.grad.zero_()#torch.zeros(self.shape,requires_grad=False) # the gradient attribute msut be a pytorch tensor 
+                self.grad+=output.grad
+            if other._custom_requires_grad:
+                if other.grad is None:
+                    other.grad = CustomTensor(_tensor=torch.zeros(other.shape),requires_grad=False)#torch.zeros_like(other)#other.grad.zero_()#torch.zeros(self.shape,requires_grad=False) # the gradient attribute msut be a pytorch tensor 
+                other.grad+=output.grad
+    
+        output._custom_backward=_addbackward
+      return output
+
+
+
+class CustomAutogradGraph:
+    def __init__(self):
+        self.graph = rx.PyDiGraph() # Initialize a new directed graph
+        #self.graph = None#rx.PyDiGraph()  # Using Rustworkx for graph representation
+        self._is_active = False # Track if the graph is active
+        self.nodes = None  # No of Nodes
+        self.edges = None  # No of Edges
+    
+    def __enter__(self):
+
+        global _autograd_graph_instance
+        if _autograd_graph_instance is not None and _autograd_graph_instance._is_active:
+            raise RuntimeError("An AutogradGraph is already active. Nested contexts are not supported directly.")
+        _autograd_graph_instance = self
+        self._is_active = True
+        return self
+    def __exit__(self, exc_type,exc_value,exc_tb):
+
+        global _autograd_graph_instance
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to exit.")
+        self._is_active = False
+        _autograd_graph_instance = None
+    
+    def add_tensor(self,tensor):
+
+        if not isinstance(tensor, CustomTensor):
+            raise TypeError("Only CustomTensor instances can be added to the graph.")
+        if self.current_node_id is None:
+            self.nodes= 0
+        self.nodes += 1
+        if not tensor._custom_requires_grad:
+            raise ValueError("Tensor must have requires_grad set to True to be added to the graph.")
+        
+        tensor_index=self.graph.add_node(tensor)#weakref.ref(tensor)) #addding tensors as weak_references to prevent memory leaks
+        return tensor_index 
+    def add_edge(self, node_from, node_to,weight=None):
+
+        if not self._is_active:
+            raise RuntimeError("Cannot add edges outside an active AutogradGraph context.")
+        if self.edges is None:
+            self.edges = 0
+        self.edges += 1
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        self.graph.add_edge(node_from, node_to,weight)
+    @classmethod
+    def check_cycle(cls):
+
+        if not cls._is_active:
+            raise RuntimeError("No active AutogradGraph to check for cycles.")
+        return rx.is_directed_acyclic_graph(cls.graph)
+    
+    def reverse_toposort(self):
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to perform topological sort.")
+        if self.check_cycle():
+            raise RuntimeError("Cannot perform topological sort on a graph with cycles.")
+        node_indexes=rx.toposort_directed(self.graph)
+        node_indexes.reverse() # must reverse the order to get the correct order for backpropagation
+        # Convert node indexes to tensor references
+        tensor_references = [self.graph[node_index] for node_index in node_indexes]
+        return  tensor_references
+    def clear_graph(self):
+
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to clear.")
+        self.graph.clear()
+        self.nodes = None
+        self.edges = None
+        self._is_active = False
+    
+    def __repr__(self):
+
+        return f"CustomAutogradGraph(nodes={self.nodes}, edges={self.edges}, active={self._is_active})"
+    def delete_node(self, node_index):
+
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete nodes from.")
+        if not isinstance(node_index, int):
+            raise TypeError("Node index must be an integer.")
+        if node_index not in self.graph:
+            raise ValueError(f"Node index {node_index} does not exist in the graph.")
+        self.graph.remove_node(node_index)
+        self.nodes -= 1
+    def delete_edge(self, node_from, node_to):
+
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete edges from.")
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        if (node_from, node_to) not in self.graph.edges():
+            raise ValueError(f"Edge ({node_from}, {node_to}) does not exist in the graph.")
+        self.graph.remove_edge(node_from, node_to)
+        self.edges -= 1
+
+
+new approach store strong references in a seperate attribute in new as self._prev and only add weak ref tensor instances to the graph
+cleaner and faster 
+
+Yes, but the effect on speed will be **negligible and likely positive** in a real-world scenario.
+
+Here’s a breakdown of why:
+
+### ## Microscopic Overhead vs. Macroscopic Gain
+
+1.  **Forward Pass:** Your proposed alternative adds two extremely fast, low-level operations during the forward pass:
+    * Assigning a tuple to `self.prev`.
+    * Creating a `weakref` to the tensor.
+    These operations are measured in nanoseconds. They are completely insignificant compared to the time spent on the actual mathematical tensor operations (like matrix multiplication), which are measured in milliseconds or more.
+
+2.  **Backward Pass:** During the backward pass, your loop will have one extra, very fast step: dereferencing the weak reference (i.e., calling the weak-ref object to get the tensor). This is another operation that is trivial compared to the gradient computation it enables.
+
+---
+
+### ## Why It Can Be Faster (The Real Performance Factor)
+
+The most significant performance impact in systems like this doesn't come from these tiny pointer-handling operations; it comes from **memory management and garbage collection (GC)**.
+
+* **Your Current Approach (Strong Refs):** All intermediate tensors are kept alive by the global graph. When you finally call `graph.clear()`, you suddenly release a potentially huge number of objects at once. This can trigger a significant garbage collection event, causing a noticeable **pause or stutter** in your application's execution.
+
+* **Your Proposed Approach (`self.prev`):** Memory is managed much more gracefully. When you're done with an output tensor and release your reference to it, Python's garbage collector can reclaim the intermediate tensors incrementally as they become unreachable. This leads to **smoother, more predictable performance** without the major GC pauses.
+
+### **Conclusion**
+
+**Do not worry about the speed of weak references or attribute access.** The performance of your autograd engine will be dominated by two things:
+1.  The efficiency of your mathematical operations (`4*a`, `c*d`, etc.).
+2.  The efficiency of your memory management.
+
+Your proposed alternative (`self.prev` with weak graph references) is vastly superior on the memory management front, which will lead to a more stable and ultimately more performant system. The microscopic overhead is a tiny price to pay for this massive gain in robustness and memory safety.
