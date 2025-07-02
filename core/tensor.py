@@ -1,7 +1,9 @@
 from typing import Union, Optional, Tuple, Any
 import torch
+import rustworkx as rx
 from . import RUN_ON_CPU, RUN_ON_GPU, RUN_ON_TPU, device
-
+# from weakref import WeakValueDictionary
+import weakref
 class Tensor(torch.Tensor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,7 +27,130 @@ for an autograd if i want to do something similar
 7. profit
 """
 
+class CustomAutogradGraph:
+    def __init__(self):
+        self.graph = rx.PyDiGraph() # Initialize a new directed graph
+        #self.graph = None#rx.PyDiGraph()  # Using Rustworkx for graph representation
+        self._is_active = False # Track if the graph is active
+        self.nodes = None  # No of Nodes
+        self.edges = None  # No of Edges
+    
+    def __enter__(self):
+        """
+        Start a new autograd graph context.
+        This method is called when entering the 'with' block.
+        """
+        global _autograd_graph_instance
+        if _autograd_graph_instance is not None and _autograd_graph_instance._is_active:
+            raise RuntimeError("An AutogradGraph is already active. Nested contexts are not supported directly.")
+        _autograd_graph_instance = self
+        self._is_active = True
+        return self
+    def __exit__(self, exc_type,exc_value,exc_tb):
+        """
+        End the autograd graph context.
+        This method is called when exiting the 'with' block.
+        """
+        global _autograd_graph_instance
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to exit.")
+        self._is_active = False
+        _autograd_graph_instance = None
+    
+    def add_tensor(self,tensor):
+        """
+        Add a tensor to the autograd graph.
+        This method should be called when a new tensor is created.
+        """
+        if not isinstance(tensor, CustomTensor):
+            raise TypeError("Only CustomTensor instances can be added to the graph.")
+        if self.current_node_id is None:
+            self.nodes= 0
+        self.nodes += 1
+        if not tensor._custom_requires_grad:
+            raise ValueError("Tensor must have requires_grad set to True to be added to the graph.")
+        
+        tensor_index=self.graph.add_node(tensor)#weakref.ref(tensor)) #addding tensors as weak_references to prevent memory leaks
+        return tensor_index 
+    def add_edge(self, node_from, node_to,weight=None):
+        """
+        Add an edge between two nodes in the graph.
+        This method should be called when a tensor operation is performed.
+        """
+        if not self._is_active:
+            raise RuntimeError("Cannot add edges outside an active AutogradGraph context.")
+        if self.edges is None:
+            self.edges = 0
+        self.edges += 1
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        self.graph.add_edge(node_from, node_to,weight)
+    @classmethod
+    def check_cycle(cls):
+        """
+        Check if the current graph has a cycle.
+        This method can be used to validate the graph structure.
+        """
+        if not cls._is_active:
+            raise RuntimeError("No active AutogradGraph to check for cycles.")
+        return rx.is_directed_acyclic_graph(cls.graph)
+    
+    def reverse_toposort(self):
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to perform topological sort.")
+        if self.check_cycle():
+            raise RuntimeError("Cannot perform topological sort on a graph with cycles.")
+        node_indexes=rx.toposort_directed(self.graph)
+        node_indexes.reverse() # must reverse the order to get the correct order for backpropagation
+        # Convert node indexes to tensor references
+        tensor_references = [self.graph[node_index] for node_index in node_indexes]
+        return  tensor_references
+    def clear_graph(self):
+        """
+        Clear the current graph.
+        This method can be used to reset the graph for a new computation.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to clear.")
+        self.graph.clear()
+        self.nodes = None
+        self.edges = None
+        self._is_active = False
+    
+    def __repr__(self):
+        """
+        Custom representation of the AutogradGraph.
+        """
+        return f"CustomAutogradGraph(nodes={self.nodes}, edges={self.edges}, active={self._is_active})"
+    def delete_node(self, node_index):
+        """
+        Delete a node from the graph.
+        This method can be used to remove a tensor from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete nodes from.")
+        if not isinstance(node_index, int):
+            raise TypeError("Node index must be an integer.")
+        if node_index not in self.graph:
+            raise ValueError(f"Node index {node_index} does not exist in the graph.")
+        self.graph.remove_node(node_index)
+        self.nodes -= 1
+    def delete_edge(self, node_from, node_to):
+        """
+        Delete an edge from the graph.
+        This method can be used to remove an edge from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete edges from.")
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        if (node_from, node_to) not in self.graph.edges():
+            raise ValueError(f"Edge ({node_from}, {node_to}) does not exist in the graph.")
+        self.graph.remove_edge(node_from, node_to)
+        self.edges -= 1
 
+graph = CustomAutogradGraph() # Global instance of the autograd graph
+graph._is_active =  True
 class CustomTensor(torch.Tensor):
 #     CustomTensor Instance (Python object)
 # │
@@ -39,7 +164,7 @@ class CustomTensor(torch.Tensor):
 # │   └── operation: None
 # to safely create CustomTensor object of a pytorch tensor it is preffered to do CustomTensor(_tensor=pytorch_tensor);del pytorch_tensor
 # this prevent modification of Custom Tensor object by pytorch autograd if the pytorch tensor is updates by autograd
-    def __new__(cls, data=None, requires_grad=False, operation=None, _tensor=None):
+    def __new__(cls, data=None, requires_grad=False, operation=None, _tensor=None,_is_leaf=False,dtype=None,device=device):
         """
         Custom __new__ method for CustomTensor.
         It wraps a torch.Tensor instance, allowing you to leverage PyTorch's
@@ -59,6 +184,9 @@ class CustomTensor(torch.Tensor):
             # This is crucial for returning CustomTensor instances from operations
             # that produce new torch.Tensors.
             _tensor = _tensor.detach()
+            # _tensor.to(device)
+            # _tensor.requires_grad=False
+            # _tensor.dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
             instance = torch.Tensor._make_subclass(cls, _tensor)#, requires_grad)
             # instance.requires_grad=requires_grad
             instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
@@ -68,7 +196,7 @@ class CustomTensor(torch.Tensor):
             # Otherwise, create a new torch.Tensor from the provided data
             # and then wrap it.
             if not isinstance(data, torch.Tensor):
-                data = torch.as_tensor(data, dtype=torch.float32) # Ensure float type
+                data = torch.as_tensor(data, dtype=torch.float32,device=device) # Ensure float type
 
             # Use torch.Tensor._make_subclass to create an instance of CustomTensor
             # that wraps the underlying torch.Tensor data.
@@ -78,6 +206,10 @@ class CustomTensor(torch.Tensor):
             instance.requires_grad_(False) # disable pytorch's autograd from recording anything for this tensor
 
         instance._custom_requires_grad = requires_grad
+        instance.dtype = dtype if dtype is not None else torch.float32 # Ensure dtype is set, default to float32
+        instance.node_id = graph.add_tensor(instance) if requires_grad else None # Add to the autograd graph if requires_grad is True
+        instance._is_leaf = _is_leaf
+
         # instance.grad = None  # Initialize gradient
         # instance.operation = operation # Store the operation that created this tensor
         return instance
@@ -192,40 +324,165 @@ class CustomTensor(torch.Tensor):
             self.operation.backward(grad_output)
 
 
-# Define a simple Operation class for your custom autograd graph
-# This would track the function performed and its inputs for backpropagation.
-class Operation:
-    def __init__(self, inputs=()):
-        self.inputs = inputs # Tensors involved in this operation
+# # Define a simple Operation class for your custom autograd graph
+# # This would track the function performed and its inputs for backpropagation.
+# class Operation:
+#     def __init__(self, inputs=()):
+#         self.inputs = inputs # Tensors involved in this operation
 
-    def forward(self, *args):
-        # This method would perform the actual computation.
-        # For a custom autograd, you typically don't implement 'forward' here
-        # in the Operation class, but rather within the Tensor's dunder methods
-        # that create this operation.
-        raise NotImplementedError
+#     def forward(self, *args):
+#         # This method would perform the actual computation.
+#         # For a custom autograd, you typically don't implement 'forward' here
+#         # in the Operation class, but rather within the Tensor's dunder methods
+#         # that create this operation.
+#         raise NotImplementedError
 
-    def backward(self, grad_output):
-        # This method computes and propagates gradients to inputs.
-        raise NotImplementedError
+#     def backward(self, grad_output):
+#         # This method computes and propagates gradients to inputs.
+#         raise NotImplementedError
 
-# Example Operation: Addition
-class Add(Operation):
-    def __init__(self, input1, input2):
-        super().__init__((input1, input2))
+# # Example Operation: Addition
+# class Add(Operation):
+#     def __init__(self, input1, input2):
+#         super().__init__((input1, input2))
 
-    def backward(self, grad_output):
-        # For addition, the gradient is simply propagated to both inputs.
-        # Make sure to handle cases where inputs might be None or already have gradients.
-        if self.inputs[0].grad is None:
-            self.inputs[0].grad = grad_output
-        else:
-            self.inputs[0].grad += grad_output
+#     def backward(self, grad_output):
+#         # For addition, the gradient is simply propagated to both inputs.
+#         # Make sure to handle cases where inputs might be None or already have gradients.
+#         if self.inputs[0].grad is None:
+#             self.inputs[0].grad = grad_output
+#         else:
+#             self.inputs[0].grad += grad_output
 
-        if self.inputs[1].grad is None:
-            self.inputs[1].grad = grad_output
-        else:
-            self.inputs[1].grad += grad_output
+#         if self.inputs[1].grad is None:
+#             self.inputs[1].grad = grad_output
+#         else:
+#             self.inputs[1].grad += grad_output
 
 
-# Define your custom Tensor class
+# # Define your custom Tensor class
+
+
+
+
+class CustomAutogradGraph:
+    def __init__(self):
+        self.graph = rx.PyDiGraph() # Initialize a new directed graph
+        #self.graph = None#rx.PyDiGraph()  # Using Rustworkx for graph representation
+        self._is_active = False # Track if the graph is active
+        self.nodes = None  # No of Nodes
+        self.edges = None  # No of Edges
+    
+    def __enter__(self):
+        """
+        Start a new autograd graph context.
+        This method is called when entering the 'with' block.
+        """
+        global _autograd_graph_instance
+        if _autograd_graph_instance is not None and _autograd_graph_instance._is_active:
+            raise RuntimeError("An AutogradGraph is already active. Nested contexts are not supported directly.")
+        _autograd_graph_instance = self
+        self._is_active = True
+        return self
+    def __exit__(self, exc_type,exc_value,exc_tb):
+        """
+        End the autograd graph context.
+        This method is called when exiting the 'with' block.
+        """
+        global _autograd_graph_instance
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to exit.")
+        self._is_active = False
+        _autograd_graph_instance = None
+    
+    def add_tensor(self,tensor):
+        """
+        Add a tensor to the autograd graph.
+        This method should be called when a new tensor is created.
+        """
+        if not isinstance(tensor, CustomTensor):
+            raise TypeError("Only CustomTensor instances can be added to the graph.")
+        if self.current_node_id is None:
+            self.nodes= 0
+        self.nodes += 1
+        if not tensor._custom_requires_grad:
+            raise ValueError("Tensor must have requires_grad set to True to be added to the graph.")
+        
+        tensor_index=self.graph.add_node(tensor)#weakref.ref(tensor)) #addding tensors as weak_references to prevent memory leaks
+        return tensor_index 
+    def add_edge(self, node_from, node_to,weight=None):
+        """
+        Add an edge between two nodes in the graph.
+        This method should be called when a tensor operation is performed.
+        """
+        if not self._is_active:
+            raise RuntimeError("Cannot add edges outside an active AutogradGraph context.")
+        if self.edges is None:
+            self.edges = 0
+        self.edges += 1
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        self.graph.add_edge(node_from, node_to,weight)
+    @classmethod
+    def check_cycle(cls):
+        """
+        Check if the current graph has a cycle.
+        This method can be used to validate the graph structure.
+        """
+        if not cls._is_active:
+            raise RuntimeError("No active AutogradGraph to check for cycles.")
+        return rx.is_directed_acyclic_graph(cls.graph)
+    
+    def reverse_toposort(self):
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to perform topological sort.")
+        if self.check_cycle():
+            raise RuntimeError("Cannot perform topological sort on a graph with cycles.")
+        node_indexes=rx.toposort_directed(self.graph)
+        node_indexes.reverse() # must reverse the order to get the correct order for backpropagation
+        # Convert node indexes to tensor references
+        tensor_references = [self.graph[node_index] for node_index in node_indexes]
+        return  tensor_references
+    def clear_graph(self):
+        """
+        Clear the current graph.
+        This method can be used to reset the graph for a new computation.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to clear.")
+        self.graph.clear()
+        self.nodes = None
+        self.edges = None
+        self._is_active = False
+    
+    def __repr__(self):
+        """
+        Custom representation of the AutogradGraph.
+        """
+        return f"CustomAutogradGraph(nodes={self.nodes}, edges={self.edges}, active={self._is_active})"
+    def delete_node(self, node_index):
+        """
+        Delete a node from the graph.
+        This method can be used to remove a tensor from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete nodes from.")
+        if not isinstance(node_index, int):
+            raise TypeError("Node index must be an integer.")
+        if node_index not in self.graph:
+            raise ValueError(f"Node index {node_index} does not exist in the graph.")
+        self.graph.remove_node(node_index)
+        self.nodes -= 1
+    def delete_edge(self, node_from, node_to):
+        """
+        Delete an edge from the graph.
+        This method can be used to remove an edge from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete edges from.")
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        if (node_from, node_to) not in self.graph.edges():
+            raise ValueError(f"Edge ({node_from}, {node_to}) does not exist in the graph.")
+        self.graph.remove_edge(node_from, node_to)
+        self.edges -= 1

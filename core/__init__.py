@@ -19,6 +19,7 @@ RUN_ON_GPU = torch.cuda.is_available()
 RUN_ON_TPU = getattr(torch, "xla", None) and torch.xla.is_available() if not RUN_ON_GPU else False
 RUN_ON_CPU = not RUN_ON_GPU and not RUN_ON_TPU
 
+
 # Determine active device
 if RUN_ON_GPU:
     device = torch.device("cuda")

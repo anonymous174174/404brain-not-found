@@ -101,4 +101,27 @@ Impact: By nullifying these references, you break the cycles, allowing Python's 
 
 
 
-A Graph Builder Class which handles graph building 
+
+
+
+# why the operations should be added optimally done
+
+t1= torch.tensor(data,requires_grad=True)
+t2 = torch.tensor (data,requires_grad=True)
+c= t1+t2
+d=(t1+t2)*a
+e=t1+t2+d
+
+vs
+t1= torch.tensor(data,requires_grad=True)
+t2 = torch.tensor (data,requires_grad=True)
+c= t1+t2
+d=c*a
+e=c+d 
+
+the graph structure of the autograd will have different structures but the overall backward with respect to t1 and t2 the grad's will come out as same.
+does pytorch optimize the graph as the forward pass is being done on the fly?
+my reasoning tells me the graph for the first is more inefficient because of more intermediate tensors being created compared to second 
+is torch as efficient for both? (given torch is eager i think no)
+
+for autograd that i am building(for learning) should i consider building this optimization? the math involved doesn't seem trivial to be honest
