@@ -149,14 +149,16 @@ class ReferenceManager:
     def __len__(self):
         """Return the number of strong references in the manager."""
         return len(self.refs)
-class CustomTensor(torch.Tensor):
     graph = CustomAutogradGraph()
     reference_manager=ReferenceManager()
+class CustomTensor(torch.Tensor):
+
     def __new__(cls,data=None,requires_grad=False,_is_leaf=False,dtype=None,device=device,due_to_operation=False):
         if data is None:
             raise ValueError("Data cannot be None")
         dtype = dtype if dtype is not None else torch.float16
         if isinstance(data,CustomTensor) and due_to_operation:
+          instance = data
           instance._custom_requires_grad = requires_grad # Must set True while making this type of tensor
           instance.node_id = cls.graph.add_tensor(weakref.ref(instance))
           instance._is_leaf = _is_leaf # must set False while making this type of tensor
