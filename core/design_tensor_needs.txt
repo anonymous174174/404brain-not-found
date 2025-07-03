@@ -296,38 +296,3 @@ class CustomAutogradGraph:
             raise ValueError(f"Edge ({node_from}, {node_to}) does not exist in the graph.")
         self.graph.remove_edge(node_from, node_to)
         self.edges -= 1
-
-
-new approach store strong references in a seperate attribute in new as self._prev and only add weak ref tensor instances to the graph
-cleaner and faster 
-
-Yes, but the effect on speed will be **negligible and likely positive** in a real-world scenario.
-
-Here’s a breakdown of why:
-
-### ## Microscopic Overhead vs. Macroscopic Gain
-
-1.  **Forward Pass:** Your proposed alternative adds two extremely fast, low-level operations during the forward pass:
-    * Assigning a tuple to `self.prev`.
-    * Creating a `weakref` to the tensor.
-    These operations are measured in nanoseconds. They are completely insignificant compared to the time spent on the actual mathematical tensor operations (like matrix multiplication), which are measured in milliseconds or more.
-
-2.  **Backward Pass:** During the backward pass, your loop will have one extra, very fast step: dereferencing the weak reference (i.e., calling the weak-ref object to get the tensor). This is another operation that is trivial compared to the gradient computation it enables.
-
----
-
-### ## Why It Can Be Faster (The Real Performance Factor)
-
-The most significant performance impact in systems like this doesn't come from these tiny pointer-handling operations; it comes from **memory management and garbage collection (GC)**.
-
-* **Your Current Approach (Strong Refs):** All intermediate tensors are kept alive by the global graph. When you finally call `graph.clear()`, you suddenly release a potentially huge number of objects at once. This can trigger a significant garbage collection event, causing a noticeable **pause or stutter** in your application's execution.
-
-* **Your Proposed Approach (`self.prev`):** Memory is managed much more gracefully. When you're done with an output tensor and release your reference to it, Python's garbage collector can reclaim the intermediate tensors incrementally as they become unreachable. This leads to **smoother, more predictable performance** without the major GC pauses.
-
-### **Conclusion**
-
-**Do not worry about the speed of weak references or attribute access.** The performance of your autograd engine will be dominated by two things:
-1.  The efficiency of your mathematical operations (`4*a`, `c*d`, etc.).
-2.  The efficiency of your memory management.
-
-Your proposed alternative (`self.prev` with weak graph references) is vastly superior on the memory management front, which will lead to a more stable and ultimately more performant system. The microscopic overhead is a tiny price to pay for this massive gain in robustness and memory safety.
