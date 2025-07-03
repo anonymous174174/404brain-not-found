@@ -1,0 +1,140 @@
+# Scalable, Memory-Safe, and Clean Custom Autograd Design
+
+## 1. Goals
+
+* **Scalability**: Support large computation graphs without incurring high memory overhead.
+* **Memory Safety**: Ensure intermediate tensors are freed when no longer needed.
+* **Clean Separation of Concerns**: Clearly separate graph construction, reference management, and tensor operations.
+* **Extensibility**: Easy to plug in new operations and backends (e.g., GPU).
+
+---
+
+## 2. High-Level Architecture
+
+```text
+┌──────────────────┐      ┌───────────────────┐      ┌─────────────────┐
+│  CustomTensor    │◀───┐ │  AutogradGraph    │◀──┐  │ GraphExecutor   │
+│  (Data + Hooks)  │    │ │  (Node/Edge store)│    │  │ (Toposort +     │
+└──────────────────┘    │ └───────────────────┘    │  │  Backward Pass) │
+                        │                          │  └─────────────────┘
+                        │                          │
+     ▲                  │                          │
+     │ adds itself      │                          │ performs
+     │ to graph via     │                          │ backward
+     │ callbacks        │                          │ on CustomTensor
+     │                  │                          │
+     │     ┌────────────────────────────────────────────────────────┐
+     └─────│ ReferenceManager (WeakValueDictionary + strong refs) │
+           └────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+1. **CustomTensor**: Subclass of `torch.Tensor` responsible for:
+
+   * Registering creation and operation history.
+   * Holding a weakref callback to notify the `AutogradGraph`.
+   * Providing a user-friendly API for operations.
+
+2. **AutogradGraph**:
+
+   * Represents the graph structure using `rustworkx.PyDiGraph`.
+   * Stores node IDs and edges when operations occur.
+   * Manages lifecycle via context manager.
+   * Provides cycle-checking and reverse topological sorting.
+
+3. **ReferenceManager**:
+
+   * Uses `weakref.WeakValueDictionary` for intermediate tensors.
+   * Holds strong references only for leaf tensors to prevent premature collection.
+   * Automatically drops tensors when they go out of scope.
+
+4. **GraphExecutor**:
+
+   * Runs backward pass: retrieves sorted nodes, invokes individual `.backward()` hooks.
+
+---
+
+## 3. Key Design Patterns
+
+### 3.1 Dependency Injection
+
+* Pass `AutogradGraph` and `ReferenceManager` explicitly to `CustomTensor`.
+* Remove reliance on global variables.
+
+### 3.2 Weak References & Cleanup
+
+* Store tensor objects in the graph via `weakref.ref`.
+* Use `WeakValueDictionary` to track intermediate tensors: automatically drop them when not used.
+
+### 3.3 Functional Hooks
+
+* Override `torch.Tensor` operations via `__torch_function__` hook:
+
+  ```python
+  def __torch_function__(cls, func, types, args=(), kwargs=None):
+      # Wrap ops to record graph edges
+      result = super().__torch_function__(func, types, args, kwargs)
+      # Identify input CustomTensors, add edge
+      graph.record_op(func.__name__, args, result)
+      return result
+  ```
+
+---
+
+## 4. Simplified Code Sketch
+
+```python
+# graph.py
+def with_autograd_graph():
+    graph = AutogradGraph()
+    mgr = ReferenceManager()
+    yield graph, mgr
+    graph.execute_backward()
+
+# tensor.py
+class CustomTensor(torch.Tensor):
+    def __new__(cls, data, graph=None, ref_mgr=None, requires_grad=False):
+        # Create Tensor subclass
+        inst = torch.Tensor._make_subclass(cls, torch.as_tensor(data))
+        inst._graph = graph
+        inst._ref_mgr = ref_mgr
+        inst.requires_grad = requires_grad
+        if requires_grad:
+            graph.add_node(inst)
+            if not inst.is_leaf:
+                ref_mgr.add(inst)
+        return inst
+
+    def __torch_function__(...):
+         # Handle op
+
+# executor.py
+class GraphExecutor:
+    def backward(self, graph):
+        for tensor in graph.reverse_toposort():
+            tensor._backward()
+```
+
+---
+
+## 5. Benefits of this Design
+
+* **Memory Safety**: Intermediate tensors collected automatically via weakrefs.
+* **No Globals**: Context managers and DI eliminate global state.
+* **Clear API**: `with_autograd_graph()` pattern separates graph lifetimes.
+* **Extendable**: New ops auto-recorded via `__torch_function__`.
+
+---
+
+## 6. Next Steps
+
+1. Implement `__torch_function__` override to record all tensor ops.
+2. Build `GraphExecutor` to orchestrate backward.
+3. Add unit tests for graph integrity and memory usage.
+4. Integrate GPU support and ensure weakrefs play well across devices.
+
+---
+
+*End of Design Document*
+

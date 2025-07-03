@@ -1,0 +1,194 @@
+from typing import Union, Optional, Tuple, Any
+import torch
+import rustworkx as rx
+import warnings
+# from weakref import WeakValueDictionary
+import weakref
+import uuid
+
+device = "cpu"
+class CustomAutogradGraph:
+
+    def __init__(self):
+        self.graph = rx.PyDiGraph() # Initialize a new directed graph
+        self._is_active = False # Track if the graph is active
+
+    
+    def __enter__(self):
+        """
+        Start a new autograd graph context.
+        This method is called when entering the 'with' block.
+        """
+        global _autograd_graph_instance
+        if _autograd_graph_instance is not None and _autograd_graph_instance._is_active:
+            raise RuntimeError("An AutogradGraph is already active. Nested contexts are not supported directly.")
+        _autograd_graph_instance = self
+        self._is_active = True
+        return self
+    def __exit__(self, exc_type,exc_value,exc_tb):
+        """
+        End the autograd graph context.
+        This method is called when exiting the 'with' block.
+        """
+        global _autograd_graph_instance
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to exit.")
+        self._is_active = False
+        _autograd_graph_instance = None
+    
+    def add_tensor(self,tensor):
+        """
+        Add a tensor to the autograd graph.
+        This method should be called when a new tensor is created.
+        """
+        if not isinstance(tensor, CustomTensor):
+            raise TypeError("Only CustomTensor instances can be added to the graph.")
+        if not tensor._custom_requires_grad:
+            raise ValueError("Tensor must have requires_grad set to True to be added to the graph.")
+        
+        tensor_index=self.graph.add_node(tensor)#weakref.ref(tensor)) #addding tensors as weak_references to prevent memory leaks
+        return tensor_index 
+    def add_edge(self, node_from, node_to,weight=None):
+        """
+        Add an edge between two nodes in the graph.
+        This method should be called when a tensor operation is performed.
+        """
+        if not self._is_active:
+            raise RuntimeError("Cannot add edges outside an active AutogradGraph context.")
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        self.graph.add_edge(node_from, node_to,weight)
+    @classmethod
+    def check_cycle(cls):
+        """
+        Check if the current graph has a cycle.
+        This method can be used to validate the graph structure.
+        """
+        if not cls._is_active:
+            raise RuntimeError("No active AutogradGraph to check for cycles.")
+        return rx.is_directed_acyclic_graph(cls.graph)
+    
+    def reverse_toposort(self):
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to perform topological sort.")
+        if self.check_cycle():
+            raise RuntimeError("Cannot perform topological sort on a graph with cycles.")
+        node_indexes=rx.toposort_directed(self.graph)
+        node_indexes.reverse() # must reverse the order to get the correct order for backpropagation
+        # Convert node indexes to tensor references
+        tensor_references = [self.graph[node_index] for node_index in node_indexes]
+        return  tensor_references
+    def clear_graph(self):
+        """
+        Clear the current graph.
+        This method can be used to reset the graph for a new computation.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to clear.")
+        self.graph.clear()
+        self._is_active = False
+    
+    def __repr__(self):
+        """
+        Custom representation of the AutogradGraph.
+        """
+        return f"CustomAutogradGraph(nodes={self.graph.num_nodes()}, edges={self.graph.num_edges()}, active={self._is_active})"
+    def delete_node(self, node_index):
+        """
+        Delete a node from the graph.
+        This method can be used to remove a tensor from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete nodes from.")
+        if not isinstance(node_index, int):
+            raise TypeError("Node index must be an integer.")
+        if node_index not in self.graph:
+            raise ValueError(f"Node index {node_index} does not exist in the graph.")
+        self.graph.remove_node(node_index)
+    def delete_edge(self, node_from, node_to):
+
+        """
+        Delete an edge from the graph.
+        This method can be used to remove an edge from the graph.
+        """
+        if not self._is_active:
+            raise RuntimeError("No active AutogradGraph to delete edges from.")
+        if not isinstance(node_from, int) or not isinstance(node_to, int):
+            raise TypeError("Node indices must be integers.")
+        if (node_from, node_to) not in self.graph.edges():
+            raise ValueError(f"Edge ({node_from}, {node_to}) does not exist in the graph.")
+        self.graph.remove_edge(node_from, node_to)
+
+
+
+class ReferenceManager:
+    def __init__(self):
+        self.refs = {}
+
+    def add_ref(self, key, value):
+        """Add a strong reference to the manager."""
+        if key in self.refs:
+            raise ValueError(f"Key '{key}' already exists")
+        self.refs[key] = value
+
+    def del_ref(self, key):
+        """Remove a strong reference from the manager."""
+        try:
+            del self.refs[key]
+        except KeyError:
+            raise ValueError(f"Key '{key}' does not exist")
+
+    def get_ref(self, key):
+        """Retrieve a strong reference from the manager."""
+        return self.refs.get(key)
+
+    def __contains__(self, key):
+        """Check if a key exists in the manager."""
+        return key in self.refs
+
+    def __len__(self):
+        """Return the number of strong references in the manager."""
+        return len(self.refs)
+class CustomTensor(torch.Tensor):
+    graph = CustomAutogradGraph()
+    reference_manager=ReferenceManager()
+    def __new__(cls,data=None,requires_grad=False,_is_leaf=False,dtype=None,device=device,due_to_operation=False):
+        if data is None:
+            raise ValueError("Data cannot be None")
+        dtype = dtype if dtype is not None else torch.float16
+        if isinstance(data,CustomTensor) and due_to_operation:
+          instance._custom_requires_grad = requires_grad # Must set True while making this type of tensor
+          instance.node_id = cls.graph.add_tensor(weakref.ref(instance))
+          instance._is_leaf = _is_leaf # must set False while making this type of tensor
+          instance._backward = lambda : None # must set correctly with the returned strong reference to the tensor in __operation__ methods
+          return instance #we return a strong instance so that the __operator__ method returns a weak reference of it 
+        if not isinstance(data,CustomTensor):
+          data = torch.as_tensor(data=data,dtype=dtype,device=device)
+          instance = torch.Tensor._make_subclass(cls,data)
+          instance.requires_grad_(False)
+        else:
+          return instance # for already created tensors no need to return a weakref 
+
+        instance._custom_requires_grad = requires_grad
+        instance.node_id =  cls.graph.add_tensor(weakref.ref(instance)) if requires_grad else None
+        instance._is_leaf = _is_leaf
+        instance._backward = lambda : None
+        # instance.unique_id = uuid.uuid4()
+        if not requires_grad:
+            return instance 
+
+        if requires_grad and _is_leaf:
+            return instance # strong reference for leaf tensors
+        else:
+            cls.reference_manager.add_ref(instance.node_id,instance)
+            return weakref.ref(instance) # for non leaf and requires grad = true tensors we return a weakref of the tensor
+
+        """def __methodsssss__(self,other):
+            i,j=self(),other()
+            output = super(i).__add__(j)
+            output = CustomTensor(data=output,requires_grad=True,_is_leaf=False,dtype=torch.float16,device=device,due_to_operation=True)
+            write a _backward function
+            output._backward=_backward
+            add nodes to the self and other in graph
+
+            return weakref.ref(output)"""

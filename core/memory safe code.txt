@@ -1,0 +1,417 @@
+Your provided code implements a basic autograd graph using `rustworkx.PyDiGraph` and a `ReferenceManager` to handle strong references. Here's a breakdown of how to enhance it for memory safety and future support for activations like Swish and Attention, along with explanations and best practices.
+
+## Memory Safety Considerations
+
+You've already taken a good step by using `weakref.ref(instance)` when adding tensors to the graph. This is crucial for preventing memory leaks in a dynamic computational graph. Here's why:
+
+  * **Cycles and Reference Counting:** Python's default garbage collector is reference-counting. If you had strong references to `CustomTensor` objects within your `PyDiGraph` nodes, and these tensors also held strong references to their "parent" tensors (which is typical for a computational graph to facilitate backpropagation), you could easily create reference cycles. A cycle means the reference count never drops to zero, even if the objects are no longer truly needed, leading to memory leaks.
+  * **Weak References Break Cycles:** By storing `weakref.ref(instance)` in `self.graph.add_node(tensor_weakref)`, you tell the garbage collector that the graph's reference to the tensor should *not* prevent the tensor from being garbage collected if no other strong references exist.
+
+However, you're also using a `ReferenceManager` to explicitly hold *strong* references for non-leaf tensors that `_custom_requires_grad` is `True` for:
+
+```python
+if requires_grad and _is_leaf:
+    return instance
+else:
+    save_strong_reference.add_ref(instance.node_id,instance)
+    return instance
+```
+
+This is where the memory management becomes a bit more nuanced and needs careful handling for safety:
+
+1.  **Purpose of `ReferenceManager`:** It seems your `ReferenceManager` is intended to keep "intermediate" tensors alive (those that `_custom_requires_grad` is `True` but `_is_leaf` is `False`) until their gradients are computed during backpropagation. This is a common pattern in autograd systems: you need to keep the intermediate results (and the tensors themselves) alive to compute gradients for upstream nodes.
+
+2.  **When to Release Strong References:** The critical part for memory safety is **when to release these strong references**. After a backward pass (or a series of backward passes for a specific computational graph), these intermediate tensors and their associated strong references in `ReferenceManager` are no longer needed for *that specific computation*. If you don't clear them, they will accumulate, leading to a memory leak.
+
+**Recommendations for Memory Safety:**
+
+  * **Explicit Clearing After Backward Pass:**
+
+      * Introduce a `clear_strong_references()` method in your `CustomAutogradGraph` (or call `save_strong_reference.clear()` from within `CustomAutogradGraph`).
+      * This method should be called *after* `reverse_toposort` (which implies a backward pass) has completed and all necessary gradients have been computed.
+      * The `CustomAutogradGraph` itself should probably own or manage the `ReferenceManager` instance.
+
+    <!-- end list -->
+
+    ```python
+    class CustomAutogradGraph:
+        def __init__(self):
+            self.graph = rx.PyDiGraph()
+            self._is_active = False
+            self.nodes = 0 # Initialize to 0, not None
+            self.edges = 0 # Initialize to 0, not None
+            self.strong_ref_manager = ReferenceManager() # Manage strong references here
+
+        # ... (existing __enter__, __exit__, add_edge, etc.)
+
+        def add_tensor(self, tensor):
+            if not isinstance(tensor, CustomTensor):
+                raise TypeError("Only CustomTensor instances can be added to the graph.")
+            # self.nodes += 1 # This is already happening implicitly by add_node returning an index
+            if not tensor._custom_requires_grad:
+                # If a tensor doesn't require grad, it doesn't need to be in the graph
+                # or have its node_id tracked by the graph.
+                # However, for consistency and tracing, you might still add it as a node
+                # but it won't participate in backprop directly.
+                # For now, let's keep the original logic.
+                pass # No error for non-requiring-grad tensors if they are intermediates
+
+            # Add tensor (weakref) to graph
+            # It's better to store a tuple of (weakref, requires_grad, is_leaf)
+            # or have the node data be a dedicated object holding these properties.
+            # For simplicity, let's assume CustomTensor always stores its own node_id.
+            
+            # The node data should ideally be the CustomTensor instance itself,
+            # and then you use weakref when adding it to the graph.
+            # rustworkx.PyDiGraph.add_node expects a data payload.
+            # Storing the weakref directly as the node payload is the correct way.
+            tensor_index = self.graph.add_node(weakref.ref(tensor))
+
+            # Store the node_id in the tensor itself
+            tensor.node_id = tensor_index
+
+            # Increment node count only if it's a new node.
+            # self.nodes is better as len(self.graph)
+            # You can update `self.nodes` and `self.edges` in `__exit__` or `clear_graph`
+            # by getting the actual counts from `self.graph.number_of_nodes()` and `number_of_edges()`.
+            # Or you can keep them as counters if they track only 'active' nodes/edges
+            # for the current context.
+            self.nodes = self.graph.number_of_nodes() # Update dynamically
+
+            if tensor._custom_requires_grad and not tensor._is_leaf:
+                self.strong_ref_manager.add_ref(tensor.node_id, tensor)
+
+            return tensor_index
+
+        def reverse_toposort(self):
+            # ... (existing code)
+            tensor_references = [self.graph[node_index]() for node_index in node_indexes] # Dereference weakrefs
+            # Filter out None if some tensors were garbage collected prematurely (unlikely if strong refs are managed)
+            tensor_references = [t for t in tensor_references if t is not None]
+            return tensor_references
+
+        def clear_graph(self):
+            # ... (existing code)
+            self.graph.clear()
+            self.nodes = 0 # Reset counts
+            self.edges = 0 # Reset counts
+            self.strong_ref_manager.clear_all_refs() # Clear all strong references!
+            self._is_active = False
+
+    class ReferenceManager:
+        # ... (existing methods)
+
+        def clear_all_refs(self):
+            """Clears all strong references from the manager."""
+            self.refs.clear()
+
+    class CustomTensor(torch.Tensor):
+        def __new__(cls, graph, save_strong_reference, data=None, requires_grad=False, _tensor=None, _is_leaf=False, dtype=None, device=None):
+            # ... (existing code)
+            instance.node_id = None # Initialize
+            if requires_grad:
+                instance.node_id = graph.add_tensor(instance) # Pass the instance itself to add_tensor
+                if not _is_leaf:
+                    # The add_tensor method in CustomAutogradGraph will now handle adding to strong_ref_manager
+                    pass # The logic for save_strong_reference.add_ref is moved to CustomAutogradGraph.add_tensor
+            return instance
+    ```
+
+  * **`CustomTensor.__new__` Refinement:**
+
+      * The `graph` and `save_strong_reference` arguments in `__new__` are a bit cumbersome. A cleaner approach might be to have a global (or context-managed) `current_graph` that `CustomTensor` can access. This is similar to how PyTorch's autograd works internally. You're already using `_autograd_graph_instance` globally, so you can leverage that.
+      * Instead of passing `save_strong_reference` directly to `CustomTensor.__new__`, let `CustomAutogradGraph.add_tensor` manage whether a strong reference is needed.
+
+    <!-- end list -->
+
+    ```python
+    _autograd_graph_instance = None # Global instance of CustomAutogradGraph
+
+    class CustomAutogradGraph:
+        # ... (as before, but strong_ref_manager is an attribute)
+
+        def add_tensor(self, tensor_instance):
+            """
+            Add a tensor to the autograd graph.
+            This method should be called when a new tensor is created.
+            """
+            if not isinstance(tensor_instance, CustomTensor):
+                raise TypeError("Only CustomTensor instances can be added to the graph.")
+            if not self._is_active:
+                raise RuntimeError("Cannot add tensors outside an active AutogradGraph context.")
+
+            # Store weak reference to avoid cycles
+            tensor_index = self.graph.add_node(weakref.ref(tensor_instance))
+            tensor_instance.node_id = tensor_index # Assign node_id to the tensor
+
+            if tensor_instance._custom_requires_grad and not tensor_instance._is_leaf:
+                self.strong_ref_manager.add_ref(tensor_index, tensor_instance)
+
+            self.nodes = self.graph.number_of_nodes() # Update node count
+            return tensor_index
+
+        def clear_graph(self):
+            # ...
+            self.strong_ref_manager.clear_all_refs()
+            self._is_active = False # This should probably remain active if you want to use the same graph object for multiple passes
+                                 # Or, make `clear_graph` fully reset everything for a *new* graph.
+                                 # If you intend for it to be for a single pass, then yes, _is_active = False is fine.
+
+    class CustomTensor(torch.Tensor):
+        def __new__(cls, data=None, requires_grad=False, _tensor=None, _is_leaf=False, dtype=None, device=None):
+            # ... (existing torch.Tensor._make_subclass logic)
+
+            instance.to(device)
+            instance._custom_requires_grad = requires_grad
+            instance._is_leaf = _is_leaf
+            instance._backward = lambda : None
+            instance.node_id = None # Initialize node_id
+
+            if requires_grad:
+                if _autograd_graph_instance is None or not _autograd_graph_instance._is_active:
+                    # Decide if you want to allow requires_grad=True tensors outside a graph context.
+                    # PyTorch allows this, they just don't get added to a graph.
+                    # If you want to force graph context for requires_grad, raise error here.
+                    pass # Or raise RuntimeError("CustomTensor with requires_grad=True must be created within an AutogradGraph context.")
+                else:
+                    _autograd_graph_instance.add_tensor(instance)
+
+            return instance
+    ```
+
+## Supporting Swish Activation and Attention
+
+To support these, you need to extend your autograd system by:
+
+1.  **Defining the Forward Pass:** Implement the mathematical operation for Swish and Attention.
+2.  **Defining the Backward Pass (Gradient Calculation):** This is the core of autograd. For each operation, you need to define how to compute the gradients of the inputs with respect to the output, using the chain rule. This will populate the `_backward` attribute of your `CustomTensor`.
+
+### Implementing Swish Activation
+
+Swish is defined as $f(x) = x \\cdot \\sigma(\\beta x)$, where $\\sigma$ is the sigmoid function. Often, $\\beta$ is set to 1, making it $f(x) = x \\cdot \\sigma(x)$.
+
+**Steps:**
+
+1.  **Create a `CustomFunction` for Swish:** Similar to PyTorch's `torch.autograd.Function`, you'll define a class with `forward` and `backward` static methods.
+
+    ```python
+    class Swish(CustomFunction):
+        @staticmethod
+        def forward(ctx, x):
+            # ctx is a context object to save tensors for backward pass
+            sigmoid_x = torch.sigmoid(x)
+            result = x * sigmoid_x
+            ctx.save_for_backward(x, sigmoid_x) # Save necessary tensors for backward
+            return result
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            x, sigmoid_x = ctx.saved_tensors
+            # Derivative of Swish(x) with respect to x:
+            # f(x) = x * sigmoid(x)
+            # f'(x) = 1 * sigmoid(x) + x * sigmoid'(x)
+            # sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x))
+            # f'(x) = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+            # f'(x) = sigmoid_x + x * sigmoid_x * (1 - sigmoid_x)
+
+            grad_x = grad_output * (sigmoid_x + x * sigmoid_x * (1 - sigmoid_x))
+            return grad_x
+    ```
+
+2.  **Integrate with `CustomTensor`:**
+
+      * When an operation like Swish is applied, create a new `CustomTensor` for the output.
+      * Set its `_backward` method to the `backward` method of your `Swish` custom function, binding the `ctx` with saved tensors.
+      * Add edges in your `CustomAutogradGraph` connecting the input `CustomTensor` to the output `CustomTensor`.
+
+    <!-- end list -->
+
+    ```python
+    # In CustomTensor, define an operation:
+    class CustomTensor(torch.Tensor):
+        # ... (existing methods)
+
+        def swish(self):
+            if not self._custom_requires_grad:
+                # If input doesn't require grad, output doesn't either, no graph tracking needed.
+                return CustomTensor(_tensor=self * torch.sigmoid(self))
+
+            # Create a context for the backward pass
+            ctx = _AutogradContext() # You'll need to define this simple class
+
+            # Perform forward pass using your CustomFunction
+            output_tensor_data = Swish.forward(ctx, self) # Use the torch.Tensor data
+
+            # Create a new CustomTensor for the output
+            new_tensor = CustomTensor(_tensor=output_tensor_data, requires_grad=True, _is_leaf=False)
+
+            # Define the backward function for this new tensor
+            def _swish_backward():
+                # Get the gradient from the downstream node
+                grad_output = new_tensor.grad # Assuming gradients are accumulated in .grad
+                if grad_output is None:
+                    # Handle cases where gradient might be None (e.g., if output isn't used for loss)
+                    return
+
+                # Calculate gradients for inputs using the CustomFunction's backward
+                grad_input = Swish.backward(ctx, grad_output)
+                # Accumulate gradients into the input tensor's .grad
+                if self.grad is None:
+                    self.grad = grad_input
+                else:
+                    self.grad += grad_input
+
+            new_tensor._backward = _swish_backward
+
+            # Add edge to the graph (self -> new_tensor)
+            if _autograd_graph_instance and _autograd_graph_instance._is_active:
+                # Ensure both input and output have node_ids for graph tracking
+                if self.node_id is None: # This shouldn't happen if requires_grad=True
+                    self.node_id = _autograd_graph_instance.add_tensor(self)
+                if new_tensor.node_id is None:
+                    new_tensor.node_id = _autograd_graph_instance.add_tensor(new_tensor)
+
+                _autograd_graph_instance.add_edge(self.node_id, new_tensor.node_id)
+
+            return new_tensor
+    ```
+
+    You'll need a simple `_AutogradContext` class:
+
+    ```python
+    class _AutogradContext:
+        def __init__(self):
+            self.saved_tensors = ()
+
+        def save_for_backward(self, *tensors):
+            self.saved_tensors = tensors
+    ```
+
+### Implementing Attention
+
+Attention mechanisms are more complex as they involve multiple matrix multiplications, softmax, and potentially other operations. You would implement each of these primitive operations (like matrix multiplication, softmax, sum, etc.) as `CustomFunction`s, and then compose them to build the attention mechanism.
+
+**General Approach for Complex Operations (like Attention):**
+
+1.  **Break Down into Primitive Operations:** An attention mechanism typically involves:
+
+      * Linear transformations (matrix multiplications) for Query, Key, Value.
+      * Dot product (or other similarity function) between Query and Key.
+      * Scaling.
+      * Softmax.
+      * Multiplication with Value.
+      * (Optional) Output linear transformation.
+
+2.  **Implement Primitives as `CustomFunction`s:**
+
+      * You'll need `CustomFunction`s for `MatMul`, `Softmax`, `Sum`, etc., similar to how PyTorch handles its ops. Each `CustomFunction` will define its `forward` and `backward` passes.
+
+    <!-- end list -->
+
+    ```python
+    # Example: MatMul CustomFunction
+    class MatMul(CustomFunction):
+        @staticmethod
+        def forward(ctx, A, B):
+            result = A @ B # Using PyTorch's @ for matrix multiplication
+            ctx.save_for_backward(A, B)
+            return result
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            A, B = ctx.saved_tensors
+            grad_A = grad_output @ B.T
+            grad_B = A.T @ grad_output
+            return grad_A, grad_B # Return gradients for each input
+    ```
+
+3.  **Compose `CustomTensor` Operations:** Define methods on `CustomTensor` (or standalone functions that operate on `CustomTensor`s) that use these `CustomFunction`s.
+
+    ```python
+    class CustomTensor(torch.Tensor):
+        # ...
+
+        def matmul(self, other):
+            if not (self._custom_requires_grad or other._custom_requires_grad):
+                return CustomTensor(_tensor=self @ other)
+
+            ctx = _AutogradContext()
+            output_tensor_data = MatMul.forward(ctx, self, other)
+            new_tensor = CustomTensor(_tensor=output_tensor_data, requires_grad=True, _is_leaf=False)
+
+            def _matmul_backward():
+                grad_output = new_tensor.grad
+                if grad_output is None: return
+
+                grad_A, grad_B = MatMul.backward(ctx, grad_output)
+
+                if self._custom_requires_grad:
+                    if self.grad is None:
+                        self.grad = grad_A
+                    else:
+                        self.grad += grad_A
+                if other._custom_requires_grad:
+                    if other.grad is None:
+                        other.grad = grad_B
+                    else:
+                        other.grad += grad_B
+
+            new_tensor._backward = _matmul_backward
+
+            # Add edges
+            if _autograd_graph_instance and _autograd_graph_instance._is_active:
+                if self.node_id is None: _autograd_graph_instance.add_tensor(self)
+                if other.node_id is None: _autograd_graph_instance.add_tensor(other)
+                if new_tensor.node_id is None: _autograd_graph_instance.add_tensor(new_tensor)
+
+                _autograd_graph_instance.add_edge(self.node_id, new_tensor.node_id)
+                _autograd_graph_instance.add_edge(other.node_id, new_tensor.node_id)
+            return new_tensor
+
+    # Then, your attention layer would combine these:
+    def scaled_dot_product_attention(query, key, value):
+        # query, key, value are CustomTensors
+        # Assuming you have .transpose(), .sqrt(), .softmax() implemented similarly
+        dk = CustomTensor(data=torch.tensor(key.size(-1), dtype=key.dtype, device=key.device))
+        scaled_qk = query.matmul(key.transpose(-2, -1)).div(dk.sqrt())
+        attention_weights = scaled_qk.softmax(dim=-1)
+        output = attention_weights.matmul(value)
+        return output
+    ```
+
+**Key Points for Gradient Calculation:**
+
+  * **Chain Rule:** The `backward` method of each `CustomFunction` receives the `grad_output` (the gradient flowing *from* downstream). It then calculates the gradient *for its inputs* based on its own local derivative and `grad_output`.
+  * **Accumulation:** Gradients for a specific tensor must be *accumulated* (`+=`) because a tensor might be an input to multiple operations.
+  * **`ctx.save_for_backward`:** Store any tensors needed for the `backward` pass that cannot be recomputed from the `grad_output` (e.g., inputs to non-linear functions, or intermediate results that would be expensive to recompute).
+  * **Leaf Tensors:** Leaf tensors (those created by the user and `requires_grad=True`) accumulate their gradients in their `.grad` attribute. Operations on them set the `_backward` function of their output.
+
+## Refinements and Best Practices
+
+  * **Error Handling in `CustomAutogradGraph`:**
+
+      * `self.current_node_id` is not defined in `__init__`. You likely intended to use `self.nodes` or `len(self.graph)`. It's safer to use `self.graph.number_of_nodes()` directly for `self.nodes` and `self.graph.number_of_edges()` for `self.edges` to reflect the actual graph state.
+      * `add_tensor` currently increments `self.nodes` *before* `self.graph.add_node`, which might lead to `self.nodes` being off by one. Update `self.nodes` *after* `add_node` if you want it to reflect the current number of nodes. Better yet, just use `len(self.graph)` or `self.graph.number_of_nodes()`.
+
+  * **`CustomTensor` Constructor:**
+
+      * The `__new__` method in `CustomTensor` is complex. Consider separating the concerns. `__new__` should primarily handle the `torch.Tensor` subclassing.
+      * The autograd graph logic (adding to graph, managing strong refs) should ideally happen in a `__init__` or a separate factory function that creates `CustomTensor`s. However, with `torch.Tensor` subclassing, `__new__` is often used for initial setup. Your current setup is reasonable, but keep clarity in mind.
+      * Make sure `device=device` is correctly passed and handled in `torch.as_tensor` and `instance.to(device)`.
+
+  * **`_autograd_graph_instance` (Global State):**
+    While using a global `_autograd_graph_instance` is common in educational autograd implementations, for more robust systems, you might consider:
+
+      * **Thread-local storage:** If you ever envision multi-threaded usage, a simple global won't work. `threading.local()` could be used.
+      * **Explicit graph passing:** Make the graph an explicit argument to operations if you want multiple independent graphs. Your `with CustomAutogradGraph()` context manager does a good job of managing this explicitly for a single active graph.
+
+  * **Backward Pass Orchestration:**
+
+      * Your `reverse_toposort` gives you the order. You'll need to iterate through these tensors and call their `_backward()` method.
+      * The `grad` attribute on `CustomTensor` will be crucial for accumulating gradients. Initialize it to `None` and then add to it as gradients flow back.
+      * For the root of the backward pass (the loss tensor), you'd typically start by setting `loss.grad = torch.tensor(1.0)` or a `grad_output` vector.
+
+  * **`check_cycle` as a class method:**
+    `@classmethod def check_cycle(cls):` implies it operates on the class, but it accesses `cls.graph` which should be `self.graph`. This should be an instance method: `def check_cycle(self):`.
+
+By carefully managing strong references and implementing the forward and backward passes for your operations, you can build a robust and memory-safe autograd system capable of handling complex neural network components.
