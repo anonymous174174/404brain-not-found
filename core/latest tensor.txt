@@ -194,3 +194,24 @@ class CustomTensor(torch.Tensor):
             add nodes to the self and other in graph
 
             return weakref.ref(output)"""
+
+
+
+Scalar and Leaf (with grad) tick
+
+Scalar and Non-leaf (no grad) tick
+
+Scalar and Non-leaf (with grad) tick
+
+Leaf (with grad) and Leaf (with grad) tick
+
+Leaf (with grad) and Non-leaf (with grad) tick
+
+Leaf (with grad) and Non-leaf (no grad) tick
+
+Non-leaf (no grad) and Non-leaf (no grad) tick
+
+Non-leaf (no grad) and Non-leaf (with grad) tick
+
+Non-leaf (with grad) and Non-leaf (with grad) tick
+

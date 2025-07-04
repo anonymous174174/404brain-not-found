@@ -109,12 +109,12 @@ class AutogradGraph:
             self.intermediate_tensors.clear()
             self.graph.clear()  # Clears all nodes and edges
 
-    def add_non_leaf_tensor_graph(self, tensor):
+    def add_tensor_graph(self, tensor):
         requires_grad = tensor._custom_requires_grad
         is_leaf = tensor._is_leaf
 
-        if not requires_grad or is_leaf:
-            raise ValueError("Tensor must be a non leaf tensor to be added to the graph.")
+        if not requires_grad:
+            raise ValueError("Tensor with require grad False cannot to be added to the graph.")
 
         tensor_index = self.graph.add_node(weakref.ref(tensor))
         tensor.node_id = tensor_index
