@@ -1,4 +1,5 @@
 # don't subclass torch tensor new approach https://chatgpt.com/s/t_6867b46df1288191ad5e0dbf19b3c93f
+# https://chatgpt.com/share/6867b73b-d830-800e-9c06-953fcbba142b
 import torch
 import weakref
 from autograd_graph import AutogradGraph
