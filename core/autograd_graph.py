@@ -111,7 +111,6 @@ class AutogradGraph:
 
     def add_tensor_graph(self, tensor):
         requires_grad = tensor._custom_requires_grad
-        is_leaf = tensor._is_leaf
 
         if not requires_grad:
             raise ValueError("Tensor with require grad False cannot to be added to the graph.")
