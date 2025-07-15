@@ -138,10 +138,19 @@ class CustomTensor:
             return self._add_tensor(other)#, op=torch.add)#Operations.add_tensor_and_tensor)
         return NotImplemented
 
+    def __radd__(self,other):
+        return self + other
+    def __iadd__(self,other):
+        if isinstance(other, numbers.Number):
+            self.tensor.add_(other)
+        elif isinstance(other,CustomTensor):
+            self.tensor.add_(other.tensor)
+    
+
     def _add_scalar(self, scalar):
         result_tensor = torch.add(self.tensor, scalar)
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -164,7 +173,7 @@ class CustomTensor:
         requires_grad = self._custom_requires_grad or other._custom_requires_grad
 
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         # Graph selection logic - assuming operations happen within a single graph context
         graph = None
@@ -208,11 +217,19 @@ class CustomTensor:
         elif isinstance(other, CustomTensor):
             return self._mul_tensor(other)
         return NotImplemented
+    
+    def __rmul__(self,other):
+        return self*other
+    def __imul__(self,other):
+        if isinstance(other, numbers.Number):
+            self.tensor.mul_(other)
+        elif isinstance(other,CustomTensor):
+            self.tensor.mul_(other.tensor)
 
     def _mul_scalar(self, scalar):
         result_tensor = torch.mul(self.tensor, scalar)
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -231,7 +248,7 @@ class CustomTensor:
         result_tensor = torch.mul(self.tensor, other.tensor)
         requires_grad = self._custom_requires_grad or other._custom_requires_grad
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph if self._custom_requires_grad else other.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -264,11 +281,41 @@ class CustomTensor:
         elif isinstance(other, CustomTensor):
             return self._sub_tensor(other)
         return NotImplemented
+    
+    def __rsub__(self, other):
+        if isinstance(other, numbers.Number):
+            return self._rsub_scalar(other)
+        
+    def __isub__(self,other):
+        if isinstance(other, numbers.Number):
+            self.tensor.sub_(other)
+        elif isinstance(other,CustomTensor):
+            self.tensor.sub_(other.tensor)
+        
+    def _rsub_scalar(self, scalar):
+        result_tensor = torch.sub(scalar, self.tensor)
+        if not self._custom_requires_grad:
+            return CustomTensor(result_tensor,due_to_operation=True)
 
+        graph = self.graph
+        result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        graph.add_edge(self._node_id, result._node_id)
+
+        self_ref = weakref.proxy(self)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if self_ref.tensor.grad is None:
+                self_ref._zero_grad()
+            # Derivative of scalar - x is -1
+            self_ref.tensor.grad.sub_(result_ref.tensor.grad)
+        result._backward = _backward
+        return result
+
+    
     def _sub_scalar(self, scalar):
         result_tensor = torch.sub(self.tensor, scalar)
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -287,7 +334,7 @@ class CustomTensor:
         result_tensor = torch.sub(self.tensor, other.tensor)
         requires_grad = self._custom_requires_grad or other._custom_requires_grad
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph if self._custom_requires_grad else other.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -313,13 +360,22 @@ class CustomTensor:
         result._backward = _backward
         return result
 
-    def __truediv__(self, scalar):
-        return self._div_scalar(scalar)
-
+    def __truediv__(self, other):
+        if isinstance(other, numbers.Number):
+            return self._div_scalar(other)
+        elif isinstance(other, CustomTensor):
+            return self._div_tensor(other)
+        return NotImplemented
+        # return self._div_scalar(scalar)
+    def __itruediv__(self,other):
+        if isinstance(other, numbers.Number):
+            self.tensor.div_(other)
+        elif isinstance(other,CustomTensor):
+            self.tensor.div_(other.tensor)
     def _div_scalar(self, scalar):
         result_tensor = torch.div(self.tensor, scalar)
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -334,11 +390,40 @@ class CustomTensor:
         result._backward = _backward
         return result
 
+    def _div_tensor(self,other):
+        result_tensor = torch.div(self.tensor, other.tensor)
+        requires_grad = self._custom_requires_grad or other._custom_requires_grad
+        if not requires_grad:
+            return CustomTensor(result_tensor,due_to_operation=True)
+
+        graph = self.graph if self._custom_requires_grad else other.graph
+        result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+
+        self_ref = weakref.proxy(self)
+        other_ref = weakref.proxy(other)
+        result_ref = weakref.proxy(result)
+
+        if self._custom_requires_grad:
+            graph.add_edge(self._node_id, result._node_id)
+        if other._custom_requires_grad:
+            graph.add_edge(other._node_id, result._node_id)
+
+        def _backward():
+            if self_ref._custom_requires_grad:
+                if self_ref.tensor.grad is None:
+                    self_ref._zero_grad()
+                self_ref.tensor.grad.add_(result_ref.tensor.grad/other_ref.tensor)
+            if other_ref._custom_requires_grad:
+                if other_ref.tensor.grad is None:
+                    other_ref._zero_grad()
+                other_ref.tensor.grad.sub_(result_ref.tensor.grad*self_ref.tensor/other_ref.tensor.pow(2))
+        result._backward = _backward
+        return result
 
     def pow(self, scalar):
         result_tensor = torch.pow(self.tensor, scalar)
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -353,49 +438,116 @@ class CustomTensor:
             self_ref.tensor.grad.add_(result_ref.tensor.grad * grad_contrib)
         result._backward = _backward
         return result
+    def __ipow__(self,other):
+        self.tensor.pow_(other)
 
     def exp(self):
         out = torch.exp(self.tensor)
-        return self._unary_op(out, lambda grad, out_tensor: grad * out_tensor)
-
-    def log(self):
-        out = torch.log(self.tensor)
-        return self._unary_op(out, lambda grad, input_tensor: grad / input_tensor)
-
-    def sin(self):
-        out = torch.sin(self.tensor)
-        return self._unary_op(out, lambda grad, input_tensor: grad * torch.cos(input_tensor))
-
-    def cos(self):
-        out = torch.cos(self.tensor)
-        return self._unary_op(out, lambda grad, input_tensor: -grad * torch.sin(input_tensor))
-
-    def sqrt(self):
-        out = torch.sqrt(self.tensor)
-        return self._unary_op(out, lambda grad, out_tensor: grad * 0.5 / out_tensor)
-
-    def _unary_op(self, result_tensor, backward_fn):
         if not self._custom_requires_grad:
-            return CustomTensor(result_tensor)
-
+            return CustomTensor(out,due_to_operation=True)
+        
         graph = self.graph
-        result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        result = CustomTensor(out, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
         graph.add_edge(self._node_id, result._node_id)
-
         self_ref = weakref.proxy(self)
         result_ref = weakref.proxy(result)
         def _backward():
             if self_ref.tensor.grad is None:
                 self_ref._zero_grad()
-            self_ref.tensor.grad.add_(backward_fn(result_ref.tensor.grad, self_ref.tensor))
+            self_ref.tensor.grad.add_(result_ref.tensor.grad * out)
         result._backward = _backward
         return result
+
+    def log(self):
+        out = torch.log(self.tensor)
+        if not self._custom_requires_grad:
+            return CustomTensor(out,due_to_operation=True)
+        
+        graph = self.graph
+        result = CustomTensor(out, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        graph.add_edge(self._node_id, result._node_id)
+        self_ref = weakref.proxy(self)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if self_ref.tensor.grad is None:
+                self_ref._zero_grad()
+            self_ref.tensor.grad.add_(result_ref.tensor.grad / self_ref.tensor)
+        result._backward = _backward
+        return result
+
+    def sin(self):
+        out = torch.sin(self.tensor)
+        if not self._custom_requires_grad:
+            return CustomTensor(out,due_to_operation=True)
+        
+        graph = self.graph
+        result = CustomTensor(out, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        graph.add_edge(self._node_id, result._node_id)
+        self_ref = weakref.proxy(self)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if self_ref.tensor.grad is None:
+                self_ref._zero_grad()
+            self_ref.tensor.grad.add_(result_ref.tensor.grad * torch.cos(self_ref.tensor))
+        result._backward = _backward
+        return result#self._unary_op(out, lambda grad, input_tensor: grad * torch.cos(input_tensor))
+
+    def cos(self):
+        out = torch.cos(self.tensor)
+        if not self._custom_requires_grad:
+            return CustomTensor(out,due_to_operation=True)
+        
+        graph = self.graph
+        result = CustomTensor(out, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        graph.add_edge(self._node_id, result._node_id)
+        self_ref = weakref.proxy(self)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if self_ref.tensor.grad is None:
+                self_ref._zero_grad()
+            self_ref.tensor.grad.add_(-result_ref.tensor.grad*torch.sin(self_ref.tensor))
+        result._backward = _backward
+        return result #self._unary_op(out, lambda grad, input_tensor: -grad * torch.sin(input_tensor))
+
+    def sqrt(self):
+        out = torch.sqrt(self.tensor)
+        if not self._custom_requires_grad:
+            return CustomTensor(out,due_to_operation=True)
+        
+        graph = self.graph
+        result = CustomTensor(out, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+        graph.add_edge(self._node_id, result._node_id)
+        self_ref = weakref.proxy(self)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if self_ref.tensor.grad is None:
+                self_ref._zero_grad()
+            self_ref.tensor.grad.add_(result_ref.tensor.grad*0.5*self_ref.tensor.pow(-0.5))
+        result._backward = _backward
+        return result
+
+    # def _unary_op(self, result_tensor, backward_fn):
+    #     if not self._custom_requires_grad:
+    #         return CustomTensor(result_tensor)
+
+    #     graph = self.graph
+    #     result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+    #     graph.add_edge(self._node_id, result._node_id)
+
+    #     self_ref = weakref.proxy(self)
+    #     result_ref = weakref.proxy(result)
+    #     def _backward():
+    #         if self_ref.tensor.grad is None:
+    #             self_ref._zero_grad()
+    #         self_ref.tensor.grad.add_(backward_fn(result_ref.tensor.grad, self_ref.tensor))
+    #     result._backward = _backward
+    #     return result
 
     def matmul(self, other):
         result_tensor = torch.matmul(self.tensor, other.tensor)
         requires_grad = self._custom_requires_grad or other._custom_requires_grad
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph if self._custom_requires_grad else other.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -425,7 +577,7 @@ class CustomTensor:
         result_tensor = self.tensor * mask.tensor
         requires_grad = self._custom_requires_grad or mask._custom_requires_grad
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph if self._custom_requires_grad else mask.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -455,7 +607,7 @@ class CustomTensor:
         result_tensor = torch.dot(self.tensor, other.tensor)
         requires_grad = self._custom_requires_grad or other._custom_requires_grad
         if not requires_grad:
-            return CustomTensor(result_tensor)
+            return CustomTensor(result_tensor,due_to_operation=True)
 
         graph = self.graph if self._custom_requires_grad else other.graph
         result = CustomTensor(result_tensor, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
@@ -523,17 +675,32 @@ class CustomTensor:
         # This would typically be handled by the graph context's exit, but
         # if `_auto_cleanup` is False, you might need manual cleanup.
         # Here, for testing GC, we'll let the context manager handle it.
+    def to_device(self, device):
+        self.tensor = self.tensor.to(device)
+        # if self.tensor.grad is not None:
+        #     self.tensor.grad = self.tensor.grad.to(device)
 
+    @property
+    def dtype(self):
+        return self.tensor.dtype
+
+    @property
+    def ndim(self):
+        return self.tensor.ndim
+
+    @property
+    def shape(self):
+        return self.tensor.shape
 
 
     def __del__(self):
-      if self._node_id is not None and self._is_leaf and self.graph: #must remove leaf tensor from graph before it is deleted from memory
-        self.graph.delete_node(self._node_id)
-        # try:
-        #       # Check if graph is still alive before trying to delete
-        #       self.graph.delete_node(self._node_id)
-        # except ReferenceError:
-        #       # Graph context has already been cleaned up, so do nothing.
-        #       pass
-      print(f"Garbage Collector has decided that reference counts for {self._node_id} are zero so Goodbye!!")
+      if self._node_id is not None and self._is_leaf: #must remove leaf tensor from graph before it is deleted from memory
+        #self.graph.delete_node(self._node_id)
+        try:
+              self.graph.delete_node(self._node_id)
+              # # Check if graph is still alive before trying to delete
+        except ReferenceError:
+              # Graph context has already been cleaned up, so do nothing.
+              pass
+      print(f"Garbage Collector has decided that reference counts for {self._node_id} and id {id(self)} are zero so Goodbye!!")
 
