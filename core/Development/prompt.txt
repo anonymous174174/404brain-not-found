@@ -1,12 +1,12 @@
 
 
-Implement sum, mean, reshape, transpose, relu, softmax, tanh, leaky relu, exponential linear unit, gelu, silu, swish, add img_to_col and any other methods required for all the layer blocks that might be required for below with the backward functions 
+Implement sum, mean, reshape, transpose, relu, softmax, tanh, leaky relu, exponential linear unit, gelu, silu, swish, add img_to_col 
+implement all the major blocks for this like nn.module ones we can use. 
 batch normalization, skip connections(i think this is already compatible currently), also conv1d conv2d conv3d,dense blocks 
 
 Enhance Broadcasting:
-
-Handle batched matmul broadcasting explicitly. make sure that broadcasting is correct for any type of scenario like  for example cnn blocks with rgm image and a batchsize which is >1
-
+make sure that broadcasting is correct for any type of scenario like  for example cnn blocks with rgm image and a batchsize which is >1
+I want the autograd to be any rank tensor compatible in the sense that for convolution blocks with b H C W or even rank 5 which happens for lstm etc it should be compatible 
 Add a zero_grad method to set gradients of all tensors to zero
 
 add method to do weight initialization
