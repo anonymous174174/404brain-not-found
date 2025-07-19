@@ -833,3 +833,5 @@ class CustomTensor:
                 if self.graph: self.graph.delete_node(self._node_id)
             except ReferenceError: # Graph might be gone first
                 pass
+if __name__ == "__main__":
+    pass
