@@ -46,7 +46,10 @@ class CustomTensor:
 
     def _zero_grad(self):
         """Sets the gradient of the underlying tensor to zero."""
-        self.tensor.grad = torch.zeros_like(self.tensor)
+        if self.tensor.grad is None:
+            self.tensor.grad = torch.zeros_like(self.tensor)
+        else:
+            self.tensor.grad.zero_()
 
     def zero_(self):
         """Sets the gradient of the underlying tensor to zero."""

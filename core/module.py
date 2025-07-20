@@ -64,7 +64,7 @@ class Linear(Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.graph = graph
+        self.graph = weakref.proxy(graph)
         
         # Using Kaiming He initialization for weights
         self.weight = CustomTensor(torch.empty(out_features, in_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
@@ -80,6 +80,7 @@ class Linear(Module):
             self.bias = None
 
     def forward(self, input_tensor):
+
         output = input_tensor.matmul(self.weight.T)
         if self.bias is not None:
             output = output + self.bias
