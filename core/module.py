@@ -97,7 +97,7 @@ class Module:
     def __init__(self):
         self._parameters = OrderedDict()
         self._modules = OrderedDict()
-        self._buffers = OrderedDict()
+        # self._buffers = OrderedDict()
         self.training = True #
         
     def __setattr__(self, name, value):
@@ -107,8 +107,8 @@ class Module:
         elif isinstance(value, Module):
             self._modules[name] = value
         # Handle buffers (non-parameter tensors like running_mean in BatchNorm)
-        elif isinstance(value, torch.Tensor):
-            self._buffers[name] = value
+        # elif isinstance(value, torch.Tensor):
+        #     self._buffers[name] = value
         super().__setattr__(name, value)
 
     def parameters(self):
@@ -140,7 +140,8 @@ class Module:
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError("Subclasses of Module must implement a forward method.")
-
+#_______________________________________________________________________________________________________________________________________--
+#LINEAR AKA DENSE LAYER
 class Linear(Module):
     """Applies a linear transformation to the incoming data: y = xA^T + b
     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
@@ -294,7 +295,7 @@ class Linear_with_activation(Module):
         self.activation = activation
         
         self.weight = CustomTensor(torch.empty(out_features, in_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
-        if activation in {"relu", "gelu", "silu", "elu"}:
+        if activation in {"relu", "gelu", "silu", "elu","gelu_approx"}:
             torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="relu")
         elif activation == "leaky_relu":
             torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="leaky_relu")
@@ -337,10 +338,12 @@ class Linear_with_activation(Module):
 
         def _backward():
             d_activation_d_pre_activation = ACTIVATIONS_GRADIENT[activation](pre_activation)
+            pre_activation_grad = d_activation_d_pre_activation*result_ref.tensor.grad
             if weight_ref._custom_requires_grad:
                 if weight_ref.tensor.grad is None:
                     weight_ref._zero_grad()
-                grad_w = d_activation_d_pre_activation*torch.matmul(result_ref.tensor.grad.transpose(-2, -1), input_tensor_ref.tensor)
+                
+                grad_w = torch.matmul(pre_activation_grad.transpose(-2, -1), input_tensor_ref.tensor)
                 weight_ref.tensor.grad.add_(weight_ref._reduce_grad_for_broadcast(grad_w, weight_ref.tensor.shape))
             
 
@@ -348,14 +351,14 @@ class Linear_with_activation(Module):
                 if bias_ref._custom_requires_grad:
                     if bias_ref.tensor.grad is None:
                         bias_ref._zero_grad()
-                    grad_b = bias_ref._reduce_grad_for_broadcast(d_activation_d_pre_activation*result_ref.tensor.grad, bias_ref.tensor.shape)
+                    grad_b = bias_ref._reduce_grad_for_broadcast(pre_activation_grad, bias_ref.tensor.shape)
                     bias_ref.tensor.grad.add_(grad_b)
             
             # Input gradient
             if input_tensor_ref._custom_requires_grad:
                 if input_tensor_ref.tensor.grad is None:
                     input_tensor_ref._zero_grad()
-                grad_in = d_activation_d_pre_activation*torch.matmul(result_ref.tensor.grad, weight_ref.tensor)
+                grad_in = torch.matmul(pre_activation_grad, weight_ref.tensor)
                 input_tensor_ref.tensor.grad.add_(input_tensor_ref._reduce_grad_for_broadcast(grad_in, input_tensor_ref.tensor.shape))
         
         result.backward = _backward
@@ -364,8 +367,22 @@ class Linear_with_activation(Module):
     def __repr__(self):
         return f"Linear(in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None})"
 
+# class Linear_with_batch_norm_and_activations(Module):
+#     """Applies a linear transformation to the incoming data: y = xA^T + b and batchnorm then activation
+#     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu, gelu_approx"""
+#     def __new__(cls, in_features, out_features, bias=True, *, graph=None,activation="relu"):
+#         assert activation in {"relu", "gelu", "leaky_relu", "sigmoid", "tanh", "silu", "elu", "gelu_approx"}
+#         return super().__new__(cls)
+#     def __init__(self, in_features, out_features, bias=True, *, graph=None,activation="relu"):
+#         super().__init__()
+#         self.in_features = in_features
+#         self.out_features = out_features
+#         self.graph = weakref.proxy(graph)
+        
+#         self.linear = Linear(in_features, out_features, bias=bias, graph=graph,activation=activation)
 
-
+#____________________________________________________________________________________________________________________________
+#CONVOLUTION LAYERS ✅ Conv → BatchNorm → ReLU → MaxPool
 class Conv2d(Module):
     """Applies a 2D convolution over an input signal composed of several input planes."""
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, *, graph=None):
@@ -428,7 +445,86 @@ class Conv2d(Module):
 
         result._backward = _backward
         return result
+#____________________________________________________________________________________________________________________________
+# BATCHNORM LAYERS
+##THIS IS INCOMPLETE
+class BatchNorm1d(Module):
+    def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
+        assert num_features > 0
+        return super().__new__(cls)
+    def __init__(self, num_features, eps=1e-5, momentum=0.1, *, graph=None):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.graph = graph
 
+        self.weight = CustomTensor(torch.ones(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
+        self.bias = CustomTensor(torch.zeros(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
+
+        self.running_mean = torch.zeros(num_features)
+        self.running_var = torch.ones(num_features)
+    
+    def forward(self, input_tensor):
+        torch_input_tensor = input_tensor.tensor
+        if self.training:
+            total_elements = torch_input_tensor.numel() // torch_input_tensor.shape[1]
+            # total_elements = 0
+            # for i,size in enumerate(torch_input_tensor.shape):
+            #     if i != 1:
+            #         total_elements *= size
+            basel_correction_factor = total_elements / (total_elements - 1) if total_elements > 1 else 1
+
+            batch_mean = torch_input_tensor.mean(dim=[i for i in range(torch_input_tensor.dim()) if i != 1])
+            batch_var = torch_input_tensor.var(dim=[i for i in range(torch_input_tensor.dim()) if i != 1], unbiased=False)
+
+
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean 
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * batch_var * basel_correction_factor
+
+            mean_to_use = batch_mean
+            var_to_use = batch_var
+        else:
+
+            mean_to_use = self.running_mean
+            var_to_use = self.running_var
+
+        shape_to =(1,) + (torch_input_tensor.shape[1],) + (1,) * (len(torch_input_tensor.shape) - 2)
+        mean_to_use = mean_to_use.reshape(shape_to)
+        var_to_use = var_to_use.reshape(shape_to)
+        weight_to_use = self.weight.tensor.reshape(shape_to)
+        bias_to_use = self.bias.tensor.reshape(shape_to)
+        normalized_tensor = (torch_input_tensor - mean_to_use) / torch.sqrt(var_to_use + self.eps)
+
+        # Apply weight and bias
+        output_tensor = normalized_tensor * weight_to_use + bias_to_use
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            grad_output = result_ref.tensor.grad
+
+            # Gradient for input
+            if input_ref._custom_requires_grad:
+                if input_ref.tensor.grad is None: input_ref._zero_grad()
+                input_ref.tensor.grad.add_(grad_output * weight_to_use)
+
+            # Gradient for weights
+            if self.weight._custom_requires_grad:
+                if self.weight.tensor.grad is None: self.weight._zero_grad()
+                self.weight.tensor.grad.add_(grad_output * normalized_tensor)
+
+            # Gradient for bias
+            if self.bias._custom_requires_grad:
+                if self.bias.tensor.grad is None: self.bias._zero_grad()
+                self.bias.tensor.grad.add_(grad_output.sum(dim=[i for i in range(grad_output.dim()) if i != 1]))
+
+        return 
+    
 class BatchNorm2d(Module):
     """Applies Batch Normalization over a 4D input."""
     def __init__(self, num_features, eps=1e-5, momentum=0.1, *, graph=None):
@@ -519,7 +615,7 @@ class BatchNorm2d(Module):
         result._backward = _backward
         return result
 
-
+#____________________________________________________________________________________________________________________________
 
 
 
