@@ -10,7 +10,8 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 torch.autograd.set_grad_enabled(False)
-
+# datatype of tensors
+dtype = torch.float32 
 # Detect hardware availability
 RUN_ON_GPU = torch.cuda.is_available()
 RUN_ON_MPS = torch.backends.mps.is_available() and torch.backends.mps.is_built() if not RUN_ON_GPU else False

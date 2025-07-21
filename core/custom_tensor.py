@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import weakref
 import numbers
 import math
-
+from .__init__ import device, dtype
 
 class CustomTensor:
     """
@@ -12,12 +12,14 @@ class CustomTensor:
     """
     __slots__ = ('tensor', '_node_id', '_custom_requires_grad', '_backward', 'graph', '__weakref__','_is_leaf')
 
-    def __new__(cls, data, *, _custom_requires_grad=False, device="cpu", dtype=torch.float32, graph=None, due_to_operation=False, is_leaf=False):
+    def __new__(cls, data, *, _custom_requires_grad=False, device=device, dtype=dtype, graph=None, due_to_operation=False, is_leaf=False):
+        assert device is not None
+        assert dtype is not None
         if isinstance(data, CustomTensor):
             return data  # Don't rewrap
         return super().__new__(cls)
 
-    def __init__(self, data, *, _custom_requires_grad=False, device="cpu", dtype=torch.float32, graph=None, due_to_operation=False, is_leaf=False):
+    def __init__(self, data, *, _custom_requires_grad=False, device=device, dtype=dtype, graph=None, due_to_operation=False, is_leaf=False):
         if isinstance(data, CustomTensor):
             return
 
@@ -77,9 +79,8 @@ class CustomTensor:
 
 
 
-    # --- Basic Operators (from your original code, now compatible with new features) ---
     def __add__(self, other):
-        # ... [Your original implementation]
+
         if isinstance(other, numbers.Number):
             return self._add_scalar(other)
         elif isinstance(other, CustomTensor):
@@ -133,7 +134,6 @@ class CustomTensor:
         return result
 
     def __mul__(self, other):
-        # ... [Your original implementation]
         if isinstance(other, numbers.Number):
             return self._mul_scalar(other)
         elif isinstance(other, CustomTensor):
@@ -515,7 +515,7 @@ class CustomTensor:
 
 
     
-    # --- New Unary Operations ---
+    # --- Unary Operations ---
     
     def sum(self, dim=None, keepdim=False):
         """Computes the sum of elements along given dimensions."""
