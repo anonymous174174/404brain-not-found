@@ -172,15 +172,15 @@ class Linear(Module):
         else:
             self.bias = None
     def forward(self, input_tensor):
-        graph = self.graph
+        
         output = input_tensor.tensor @ self.weight.tensor.transpose(-2, -1)
         if self.bias is not None:
             output.add_(self.bias.tensor)
 
         if not self.training:
             return CustomTensor(output, due_to_operation=True)
-
-        result = CustomTensor(output, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
+        graph = self.graph
+        result = CustomTensor(output, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
         
         if input_tensor._custom_requires_grad:
             graph.add_edge(input_tensor._node_id, result._node_id)
@@ -312,7 +312,7 @@ class Linear_with_activation(Module):
         else:
             self.bias = None
     def forward(self, input_tensor):
-        graph = self.graph
+        
         activation = self.activation
         pre_activation = input_tensor.tensor @ self.weight.tensor.transpose(-2, -1)
         if self.bias is not None:
@@ -321,8 +321,8 @@ class Linear_with_activation(Module):
         output = ACTIVATIONS[activation](pre_activation)
         if not self.training:
             return CustomTensor(output, due_to_operation=True)
-
-        result = CustomTensor(output, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
+        graph = self.graph
+        result = CustomTensor(output, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
         
         if input_tensor._custom_requires_grad:
             graph.add_edge(input_tensor._node_id, result._node_id)
@@ -354,7 +354,6 @@ class Linear_with_activation(Module):
                     grad_b = bias_ref._reduce_grad_for_broadcast(pre_activation_grad, bias_ref.tensor.shape)
                     bias_ref.tensor.grad.add_(grad_b)
             
-            # Input gradient
             if input_tensor_ref._custom_requires_grad:
                 if input_tensor_ref.tensor.grad is None:
                     input_tensor_ref._zero_grad()
@@ -494,36 +493,45 @@ class BatchNorm1d(Module):
         var_to_use = var_to_use.reshape(shape_to)
         weight_to_use = self.weight.tensor.reshape(shape_to)
         bias_to_use = self.bias.tensor.reshape(shape_to)
-        normalized_tensor = (torch_input_tensor - mean_to_use) / torch.sqrt(var_to_use + self.eps)
+        normalizing_factor =torch.sqrt(var_to_use + self.eps)
+        normalized_tensor = (torch_input_tensor - mean_to_use) / normalizing_factor
 
         # Apply weight and bias
         output_tensor = normalized_tensor * weight_to_use + bias_to_use
         if not self.training:
             return CustomTensor(output_tensor, due_to_operation=True)
-        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        graph = self.graph
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=graph, is_leaf=False)
+        graph.add_edge(input_tensor._node_id, result._node_id)
+        graph.add_edge(self.weight._node_id, result._node_id)
+        graph.add_edge(self.bias._node_id, result._node_id)
+
         input_ref = weakref.proxy(input_tensor)
         result_ref = weakref.proxy(result)
-
+        weight_ref = weakref.proxy(self.weight)
+        bias_ref = weakref.proxy(self.bias)
         def _backward():
-            grad_output = result_ref.tensor.grad
-
-            # Gradient for input
             if input_ref._custom_requires_grad:
                 if input_ref.tensor.grad is None: input_ref._zero_grad()
-                input_ref.tensor.grad.add_(grad_output * weight_to_use)
+                grad_input = (result_ref.tensor.grad * weight_to_use)/normalizing_factor
+                grad_input = input_ref._reduce_grad_for_broadcast(grad_input, input_ref.tensor.shape)
+                input_ref.tensor.grad.add_(grad_input)
 
-            # Gradient for weights
-            if self.weight._custom_requires_grad:
-                if self.weight.tensor.grad is None: self.weight._zero_grad()
-                self.weight.tensor.grad.add_(grad_output * normalized_tensor)
+
+            if weight_ref._custom_requires_grad:
+                if weight_ref.tensor.grad is None: weight_ref._zero_grad()
+                grad_weight = weight_ref._reduce_grad_for_broadcast(result_ref.tensor.grad * normalized_tensor, shape_to)
+                grad_weight = grad_weight.reshape(weight_ref.tensor.shape)
+                weight_ref.tensor.grad.add_(grad_weight)
 
             # Gradient for bias
-            if self.bias._custom_requires_grad:
+            if bias_ref._custom_requires_grad:
                 if self.bias.tensor.grad is None: self.bias._zero_grad()
-                self.bias.tensor.grad.add_(grad_output.sum(dim=[i for i in range(grad_output.dim()) if i != 1]))
-
-        return 
+                grad_bias = bias_ref._reduce_grad_for_broadcast(result_ref.tensor.grad, shape_to)
+                grad_bias = grad_bias.reshape(bias_ref.tensor.shape)
+                self.bias.tensor.grad.add_(grad_bias)
+        result._backward = _backward
+        return result
     
 class BatchNorm2d(Module):
     """Applies Batch Normalization over a 4D input."""
