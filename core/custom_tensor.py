@@ -60,6 +60,7 @@ class CustomTensor:
 
 
     # --- Broadcasting Helper ---
+    @torch.compile
     def _reduce_grad_for_broadcast(self, grad, target_shape):
         """Reduces a gradient to match the shape of a tensor that was broadcasted."""
         if grad.shape == target_shape:

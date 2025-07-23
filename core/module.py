@@ -450,30 +450,28 @@ class BatchNorm_Nd(Module):
     def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
         assert num_features > 0
         return super().__new__(cls)
-    
     def __init__(self, num_features, eps=1e-5, momentum=0.1, *, graph=None):
         super().__init__()
         self.num_features = num_features
         self.eps = eps
         self.momentum = momentum
-        self.graph = graph
+        self.graph = weakref.proxy(graph)
 
         self.weight = CustomTensor(torch.ones(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
         self.bias = CustomTensor(torch.zeros(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
 
-        self.register_buffer('running_mean', torch.zeros(num_features))
-        self.register_buffer('running_var', torch.ones(num_features))
-        
-        self._channel_axis = 1
+        self.running_mean = torch.zeros(num_features)
+        self.running_var = torch.ones(num_features)
+
+        self._channel_axis = 1  
         self._shape_cache = {}
-    
     def _get_broadcast_shape(self, input_shape):
 
         if input_shape not in self._shape_cache:
             self._shape_cache[input_shape] = (1,) + (input_shape[1],) + (1,) * (len(input_shape) - 2)
         return self._shape_cache[input_shape]
     
-    @torch.jit.script_method if hasattr(torch.jit, 'script_method') else lambda x: x
+    @torch.compile
     def _compute_stats(self, x: torch.Tensor):
 
         reduce_dims = tuple(i for i in range(x.dim()) if i != self._channel_axis)
@@ -485,236 +483,84 @@ class BatchNorm_Nd(Module):
         return mean, var
     
     def forward(self, input_tensor):
-        x = input_tensor.tensor
-        
+        torch_input_tensor = input_tensor.tensor
+
         if self.training:
-
-            batch_mean, batch_var = self._compute_stats(x)
+            batch_mean, batch_var = self._compute_stats(torch_input_tensor)
+            total_elements = torch_input_tensor.numel() // torch_input_tensor.shape[self._channel_axis]
+            unbiased_var = batch_var * total_elements / (total_elements - 1) if total_elements > 1 else batch_var
             
-
-            n = x.numel() // x.shape[self._channel_axis]
-            unbiased_var = batch_var * n / (n - 1) if n > 1 else batch_var
-            
-
-            self.running_mean.mul_(1 - self.momentum).add_(batch_mean, alpha=self.momentum)
-            self.running_var.mul_(1 - self.momentum).add_(unbiased_var, alpha=self.momentum)
+            self.running_mean.mul_(1-self.momentum).add_(batch_mean, alpha=self.momentum)
+            self.running_var.mul_(1-self.momentum).add_(unbiased_var, alpha=self.momentum)
             
             mean, var = batch_mean, batch_var
         else:
-            mean, var = self.running_mean, self.running_var
-
-            shape = self._get_broadcast_shape(x.shape)
-            normalized = (x - mean.view(shape)) / torch.sqrt(var.view(shape) + self.eps)
-            output = normalized * self.weight.tensor.view(shape) + self.bias.tensor.view(shape)
-            return CustomTensor(output, due_to_operation=True)
+            mean , var = self.running_mean, self.running_var
+            shape_to = self._get_broadcast_shape(torch_input_tensor.shape)
+            normalized = (torch_input_tensor - mean.view(shape_to)) / torch.sqrt(var.view(shape_to) + self.eps)
+            result = normalized * self.weight.tensor.view(shape_to) + self.bias.tensor.view(shape_to)
+            return CustomTensor(result, due_to_operation=True)
         
-
-        return self._forward_with_gradients(input_tensor, x, mean, var)
-    
-    def _forward_with_gradients(self, input_tensor, x, mean, var):
-
-        shape = self._get_broadcast_shape(x.shape)
+        shape_to = self._get_broadcast_shape(torch_input_tensor.shape)
+        mean_shaped = mean.view(shape_to)
+        var_shaped = var.view(shape_to)
+        weight_shaped = self.weight.tensor.view(shape_to)
+        bias_shaped = self.bias.tensor.view(shape_to)
         
-
-        mean_shaped = mean.view(shape)
-        var_shaped = var.view(shape)
-        weight_shaped = self.weight.tensor.view(shape)
-        bias_shaped = self.bias.tensor.view(shape)
-        
-
         inv_std = torch.rsqrt(var_shaped + self.eps)  
-        centered = x - mean_shaped
-        normalized = centered * inv_std
+        input_minus_mean = torch_input_tensor - mean_shaped
+        normalized = input_minus_mean* inv_std
         output = normalized * weight_shaped + bias_shaped
-        
         result = CustomTensor(output, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
-    
+        
         graph = self.graph
         graph.add_edge(input_tensor._node_id, result._node_id)
         graph.add_edge(self.weight._node_id, result._node_id)
         graph.add_edge(self.bias._node_id, result._node_id)
 
-        # Store references for backward pass
         input_ref = weakref.proxy(input_tensor)
         result_ref = weakref.proxy(result)
         weight_ref = weakref.proxy(self.weight)
         bias_ref = weakref.proxy(self.bias)
-        
-        # Pre-compute values needed for backward pass
-        n = x.numel() // x.shape[self._channel_axis]
-        
+
         def _backward():
-            grad_out = result_ref.tensor.grad
-            
-            # Bias gradient (most efficient)
+            result_gradient = result_ref.tensor.grad
+
             if bias_ref._custom_requires_grad:
                 if bias_ref.tensor.grad is None: 
                     bias_ref._zero_grad()
-                grad_bias = bias_ref._reduce_grad_for_broadcast(grad_out, shape)
+                grad_bias = bias_ref._reduce_grad_for_broadcast(result_gradient, shape_to)
                 bias_ref.tensor.grad.add_(grad_bias.view(bias_ref.tensor.shape))
 
-            # Weight gradient
             if weight_ref._custom_requires_grad:
                 if weight_ref.tensor.grad is None: 
                     weight_ref._zero_grad()
-                grad_weight = weight_ref._reduce_grad_for_broadcast(grad_out * normalized, shape)
+                grad_weight = weight_ref._reduce_grad_for_broadcast(result_gradient * normalized, shape_to)
                 weight_ref.tensor.grad.add_(grad_weight.view(weight_ref.tensor.shape))
 
-            # Input gradient (most expensive)
             if input_ref._custom_requires_grad:
                 if input_ref.tensor.grad is None: 
                     input_ref._zero_grad()
-                grad_input = self._compute_input_gradient(
-                    grad_out, x, normalized, centered, weight_shaped, inv_std, n
+                grad_input = self.batchnorm_gradient_for_input_tensor( 
+                    result_gradient = result_gradient,
+                    input_tensor=torch_input_tensor,
+                    weight_shaped=weight_shaped,
+                    input_minus_mean=input_minus_mean, 
+                    inv_std=inv_std, 
+                    total_elements=total_elements
                 )
                 input_ref.tensor.grad.add_(grad_input)
 
         result._backward = _backward
         return result
-    
-    @torch.jit.script_method if hasattr(torch.jit, 'script_method') else lambda x: x
-    def _compute_input_gradient(self, grad_out: torch.Tensor, x: torch.Tensor, 
-                                centered: torch.Tensor,weight_shaped: torch.Tensor, 
-                                inv_std: torch.Tensor, n: int):
-        """Optimized input gradient computation using efficient vectorized operations"""
-        reduce_dims = tuple(i for i in range(x.dim()) if i != self._channel_axis)
+    @torch.compile
+    def batchnorm_gradient_for_input_tensor(self,*,result_gradient, input_tensor, weight_shaped,input_minus_mean,inv_std,total_elements):
+        reduce_dims = tuple(i for i in range(input_tensor.dim()) if i != self._channel_axis)
+
+        outer_term = weight_shaped*inv_std
+        term_1 = result_gradient
+        term_2 = (-1/total_elements)*result_gradient.sum(dim=reduce_dims, keepdim=True)
+        term3_sum_component = (input_minus_mean*result_gradient).sum(dim=reduce_dims, keepdim=True)
+        term3 = inv_std**2 * (-1/total_elements) * input_minus_mean * term3_sum_component
+        return outer_term * (term_1 + term_2 + term3)
         
-        # More efficient gradient computation
-        # Based on: https://arxiv.org/abs/1502.03167 (Batch Normalization paper)
-        grad_normalized = grad_out * weight_shaped
-        
-        # Compute gradient components more efficiently
-        sum_grad_normalized = grad_normalized.sum(dim=reduce_dims, keepdim=True)
-        sum_grad_normalized_centered = (grad_normalized * centered).sum(dim=reduce_dims, keepdim=True)
-        
-        # Final gradient computation
-        grad_input = inv_std * (
-            grad_normalized 
-            - sum_grad_normalized / n
-            - centered * inv_std**2 * sum_grad_normalized_centered / n
-        )
-        
-        return grad_input
-# class BatchNorm_Nd(Module):
-#     def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
-#         assert num_features > 0
-#         return super().__new__(cls)
-#     def __init__(self, num_features, eps=1e-5, momentum=0.1, *, graph=None):
-#         super().__init__()
-#         self.num_features = num_features
-#         self.eps = eps
-#         self.momentum = momentum
-#         self.graph = weakref.proxy(graph)
-
-#         self.weight = CustomTensor(torch.ones(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
-#         self.bias = CustomTensor(torch.zeros(num_features), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
-
-#         self.running_mean = torch.zeros(num_features)
-#         self.running_var = torch.ones(num_features)
-
-#     def forward(self, input_tensor):
-#         torch_input_tensor = input_tensor.tensor
-#         if self.training:
-#             total_elements = torch_input_tensor.numel() // torch_input_tensor.shape[1]
-#             # total_elements = 0
-#             # for i,size in enumerate(torch_input_tensor.shape):
-#             #     if i != 1:
-#             #         total_elements *= size
-#             basel_correction_factor = total_elements / (total_elements - 1) if total_elements > 1 else 1
-
-#             batch_mean = torch_input_tensor.mean(dim=[i for i in range(torch_input_tensor.dim()) if i != 1])
-#             batch_var = torch_input_tensor.var(dim=[i for i in range(torch_input_tensor.dim()) if i != 1], unbiased=False)
-
-
-#             self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean 
-#             self.running_var = (1 - self.momentum) * self.running_var + self.momentum * batch_var * basel_correction_factor
-
-#             mean_to_use = batch_mean
-#             var_to_use = batch_var
-#         else:
-
-#             mean_to_use = self.running_mean
-#             var_to_use = self.running_var
-
-#         shape_to =(1,) + (torch_input_tensor.shape[1],) + (1,) * (len(torch_input_tensor.shape) - 2)
-#         mean_to_use = mean_to_use.reshape(shape_to)
-#         var_to_use = var_to_use.reshape(shape_to)
-#         weight_to_use = self.weight.tensor.reshape(shape_to)
-#         bias_to_use = self.bias.tensor.reshape(shape_to)
-#         normalizing_factor =torch.sqrt(var_to_use + self.eps)
-#         normalized_tensor = (torch_input_tensor - mean_to_use) / normalizing_factor
-
-#         # Apply weight and bias
-#         output_tensor = normalized_tensor * weight_to_use + bias_to_use
-#         if not self.training:
-#             return CustomTensor(output_tensor, due_to_operation=True)
-#         weight_to_use = None
-#         bias_to_use = None
-#         normalizing_factor = None
-#         shape_to = None
-#         graph = self.graph
-#         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=graph, is_leaf=False)
-#         graph.add_edge(input_tensor._node_id, result._node_id)
-#         graph.add_edge(self.weight._node_id, result._node_id)
-#         graph.add_edge(self.bias._node_id, result._node_id)
-
-#         input_ref = weakref.proxy(input_tensor)
-#         result_ref = weakref.proxy(result)
-#         weight_ref = weakref.proxy(self.weight)
-#         bias_ref = weakref.proxy(self.bias)
-#         def _backward():
-#             if weight_ref._custom_requires_grad:
-#                 if weight_ref.tensor.grad is None: weight_ref._zero_grad()
-#                 grad_weight = weight_ref._reduce_grad_for_broadcast(result_ref.tensor.grad * normalized_tensor, shape_to)
-#                 grad_weight = grad_weight.reshape(weight_ref.tensor.shape)
-#                 weight_ref.tensor.grad.add_(grad_weight)
-
-#             if bias_ref._custom_requires_grad:
-#                 if self.bias.tensor.grad is None: self.bias._zero_grad()
-#                 grad_bias = bias_ref._reduce_grad_for_broadcast(result_ref.tensor.grad, shape_to)
-#                 grad_bias = grad_bias.reshape(bias_ref.tensor.shape)
-#                 self.bias.tensor.grad.add_(grad_bias)
-#             # Let the deep dive into math hell begin
-#             # the 3 sources of gradients for the input tensor are normalized tensor, mean and variance 
-#             if input_ref._custom_requires_grad:
-#                 if input_ref.tensor.grad is None: input_ref._zero_grad()
-#                 grad_input = BatchNorm_Nd.batchnorm_gradient_for_input_tensor(
-#                     incoming_gradient=result_ref.tensor.grad,
-#                     input_tensor=torch_input_tensor,
-#                     weight=weight_ref.tensor,
-#                     mean=mean_to_use,
-#                     var=var_to_use,
-#                     eps=self.eps,
-#                 )
-#                 input_ref.tensor.grad.add_(grad_input)
-
-#         result._backward = _backward
-#         return result
-#     @staticmethod
-#     @torch.compile
-#     def batchnorm_gradient_for_input_tensor(*,incoming_gradient,input_tensor,weight,mean,var,eps):
-#         dims_to_reduce = [i for i in range(input_tensor.dim()) if i != 1]
-#         shape_to_broadcast = (1,) + (input_tensor.shape[1],) + (1,) * (len(input_tensor.shape) - 2)
-#         total_elements = input_tensor.numel() // input_tensor.shape[1]
-#         normalizing_factor = torch.sqrt(var + eps)
-#         weight_reshaped = weight.reshape(shape_to_broadcast)
-#         mean_reshaped = mean.reshape(shape_to_broadcast)
-#         normalizing_factor_reshaped = normalizing_factor.reshape(shape_to_broadcast)
-#         outer_term = weight_reshaped / normalizing_factor_reshaped
-#         term1 = incoming_gradient
-#         term2 = (-1 / total_elements) * incoming_gradient.sum(dim=dims_to_reduce, keepdim=True)
-#         term3_sum_component = (incoming_gradient * (input_tensor - mean_reshaped)).sum(dim=dims_to_reduce, keepdim=True)
-#         term3 = (-1 / (total_elements * normalizing_factor_reshaped**2)) * (input_tensor - mean_reshaped) * term3_sum_component
-#         grad_input = outer_term * (term1 + term2 + term3)
-#         return grad_input
-#     # @staticmethod
-#     # def batchnorm_gradient_for_input_tensor(*,incoming_gradient,input_tensor, mean_to_use,shape_to,normalizing_factor,weight_to_use,total_elements):
-#     #     outer_term = weight_to_use/normalizing_factor
-#     #     grad_input = outer_term * (incoming_gradient
-#     #                                (-1/total_elements)
-#     #                                *incoming_gradient.sum(dim=[i for i in range(incoming_gradient.dim()) if i != 1]).reshape(shape_to)
-#     #                                - 1/(total_elements*normalizing_factor**2)
-#     #                                *(input_tensor - mean_to_use)
-#     #                                *(incoming_gradient*(input_tensor - mean_to_use)).sum(dim=[i for i in range(incoming_gradient.dim()) if i != 1]).reshape(shape_to))    
-#     # #    (weight_to_use/normalizing_factor)*(incoming_gradient - 1/total_elements * incoming_gradient.sum(dim=[i for i in range(input_tensor.dim()) if i != 1]).reshape(shape_to) - 1/(total_elements*normalizing_factor**2)*(input_tensor - mean_to_use)*incoming_gradient*(input_tensor - mean_to_use).sum(dim=[i for i in range(input_tensor.dim()) if i != 1]).reshape(shape_to))    
-#     #     return grad_input
