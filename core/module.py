@@ -400,7 +400,7 @@ class Conv2d(Module):
         self.dilation = (dilation, dilation) if isinstance(dilation, int) else dilation
         self.padding = (padding, padding) if isinstance(padding, int) else padding
         self.groups = groups
-        self.graph = weakref.proxy(graph)
+        self.graph = weakref.proxy(graph) if graph is not None else None
 
         weight_shape = (out_channels, in_channels // groups, *self.kernel_size)
         self.weight = CustomTensor(torch.empty(weight_shape), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
@@ -430,64 +430,136 @@ class Conv2d(Module):
         if not self.training:
             return CustomTensor(output_tensor, due_to_operation=True)
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
-        requires_grad = input_tensor._custom_requires_grad or self.weight._custom_requires_grad
-        if not requires_grad:
-            return CustomTensor(output_tensor, due_to_operation=True)
         
-        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
         self.graph.add_edge(input_tensor._node_id, result._node_id)
         self.graph.add_edge(self.weight._node_id, result._node_id)
-        self.graph.add_edge(self.bias._node_id, result._node_id)
+        if self.bias is not None:
+            self.graph.add_edge(self.bias._node_id, result._node_id)
 
         
         input_ref = weakref.proxy(input_tensor)
         weight_ref = weakref.proxy(self.weight)
-        bias_ref = weakref.proxy(self.bias)
+        bias_ref = weakref.proxy(self.bias) if self.bias is not None else None
         result_ref = weakref.proxy(result)
 
-        # def _backward():
-        #     grad_output = result_ref.tensor.grad
-            
-        #     # Gradient for input
-        #     if bias_ref._custom_requires_grad:
-        #         if bias_ref.tensor.grad is None: bias_ref._zero_grad()
-        #         bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
+        def _backward():
+            grad_output = result_ref.tensor.grad
+            if bias_ref is not None:
+                if bias_ref._custom_requires_grad:
+                    if bias_ref.tensor.grad is None: bias_ref._zero_grad()
+                    bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
+                
+            if input_ref._custom_requires_grad:
+                if input_ref.tensor.grad is None: input_ref._zero_grad()
+                input_ref.tensor.grad.add_(
+                    self._calculate_gradient_input_tensor(input_ref.tensor,weight_ref.tensor,grad_output)
+                )
 
-        #     # Gradient for kernel/weights
-        #     # this is essentially a mathematical convolution of the input and the grad_output
-        #     # the formulation derivative sums in the N H and W demensions and requires shuffling of the dimensions of channel and batch before performing the convolution
-        #     # Input: (N, Cin, H, W) -> (Cin, N, H, W)
-        #     # GradOutput: (N, Cout, oH, oW) -> (Cout, N, oH, oW)
-        #     # The convolution is now effectively done with N as the channel dimension
-        #     if weight_ref._custom_requires_grad:
-        #         if weight_ref.tensor.grad is None: weight_ref._zero_grad()
-        #         transposed_input = input_ref.tensor.transpose(0, 1)
-        #         transposed_grad_output = grad_output.transpose(0, 1)
-        #         grad_weight = F.conv2d(transposed_input, transposed_grad_output, groups=input_ref.tensor.shape[1])
-        #         weight_ref.tensor.grad.add_(
-        #             torch.nn.grad.conv2d_weight(input_ref.tensor, weight_ref.tensor.shape, grad_output, self.stride, self.padding)
-        #         )
-        #     if input_ref._custom_requires_grad:
-        #         if input_ref.tensor.grad is None: input_ref._zero_grad()
-        #         input_ref.tensor.grad.add_(
-        #             torch.nn.grad.conv2d_input(input_ref.tensor.shape, weight_ref.tensor, grad_output, self.stride, self.padding)
-        #         )
+            if weight_ref._custom_requires_grad:
+                if weight_ref.tensor.grad is None: weight_ref._zero_grad()
+                # tried vectorizing groups but failed hence using autograd for computing weight for efficiency (NOTE This is considered cheating)
+                weight_ref.tensor.grad.add_(
+                    torch.nn.grad.conv2d_weight(
+                    input=input_tensor.tensor,
+                    weight_size=weight_ref.tensor.shape,
+                    grad_output=grad_output,
+                    stride=self.stride,
+                    padding=self.padding,
+                    dilation=self.dilation,
+                    groups=self.groups
+                    )
+                )
 
-        #     # Gradient for weights
-        #     if weight_ref._custom_requires_grad:
-        #         if weight_ref.tensor.grad is None: weight_ref._zero_grad()
-        #         weight_ref.tensor.grad.add_(
-        #             torch.nn.grad.conv2d_weight(input_ref.tensor, weight_ref.tensor.shape, grad_output, self.stride, self.padding)
-        #         )
+        result._backward = _backward
+        return result
+    @torch.compile
+    def _calculate_gradient_input_tensor(self, input_tensor,weight_tensor,grad_output):
+        h_in, w_in = input_tensor.shape[2], input_tensor.shape[3]
+        h_out, w_out = grad_output.shape[2], grad_output.shape[3]
+        stride = self.stride
+        padding = self.padding
+        kernel_size = self.kernel_size
+        dilation = self.dilation
+        # The formula relating input size to output size in a transposed convolution is:
+        # InputSize = (OutputSize - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
+        # We rearrange this to solve for the required output_padding.
+        output_padding_h = h_in - ((h_out - 1) * stride[0] - 2 * padding[0] + dilation[0] * (kernel_size[0] - 1) + 1)
+        output_padding_w = w_in - ((w_out - 1) * stride[1] - 2 * padding[1] + dilation[1] * (kernel_size[1] - 1) + 1)
+        output_padding = (output_padding_h, output_padding_w)
 
-        #     # Gradient for bias
-        #     if bias_ref._custom_requires_grad:
-        #         if bias_ref.tensor.grad is None: bias_ref._zero_grad()
-        #         bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
+        grad_input = F.conv_transpose2d(
+            grad_output,
+            weight_tensor,
+            stride=stride,
+            padding=padding,
+            output_padding=output_padding,
+            dilation=dilation,
+            groups=self.groups
+        )
+        return grad_input
+    
+    def _calculate_gradient_weight_tensor_loop(self,input_tensor,grad_output):
+        #The gradient w.r.t. the weights is a convolution
+        # of the input (X) and the output gradient (grad_output).
+        # For grouped convolutions, we must perform this calculation for each group separately.
+        in_channels = self.in_channels
+        groups = self.groups
+        out_channels = self.out_channels
+        in_channels_per_group = in_channels // groups
+        out_channels_per_group = out_channels // groups
+        grad_W_groups = []
 
-        # result._backward = _backward
-        # return result
+        for g in range(groups):
+            # Slice the input tensor to get the channels for the current group
+            start_in_ch = g * in_channels_per_group
+            end_in_ch = start_in_ch + in_channels_per_group
+            X_g = input_tensor[:, start_in_ch:end_in_ch, :, :]
 
+            # Slice the output gradient tensor to get the channels for the current group
+            start_out_ch = g * out_channels_per_group
+            end_out_ch = start_out_ch + out_channels_per_group
+            grad_output_g = grad_output[:, start_out_ch:end_out_ch, :, :]
+
+            # To calculate the weight gradient via a convolution, we must cleverly
+            # permute the input (X_g) and output gradient (grad_output_g) tensors.
+            # We treat X_g as the input and grad_output_g as the kernel.
+            # X_g: (N, Cin/g, H, W) -> permute -> (Cin/g, N, H, W)
+            # grad_output_g: (N, Cout/g, oH, oW) -> permute -> (Cout/g, N, oH, oW)
+            # The F.conv2d call then treats 'Cin/g' as the batch size and 'N' as the input channels.
+            # The stride and dilation parameters from the original convolution are swapped.
+            X_g_permuted = X_g.transpose(0, 1)
+            grad_output_g_permuted = grad_output_g.transpose(0, 1)
+
+            grad_W_g_permuted = F.conv2d(
+                X_g_permuted,
+                grad_output_g_permuted,
+                stride=self.dilation,
+                padding=self.padding,
+                dilation=self.stride,
+                groups=1 # The group calculation is handled by our loop, so this is a standard conv.
+            )
+
+            # The result has shape (Cin/g, Cout/g, kH, kW). We must permute it back to
+            # the standard weight layout of (Cout/g, Cin/g, kH, kW).
+            grad_W_g = grad_W_g_permuted.transpose(0, 1)
+            grad_W_groups.append(grad_W_g)
+
+        # Concatenate the gradients from all groups along the output channel dimension.
+        # The weight tensor for grouped convolutions is laid out by stacking the weights
+        # for each group, so we do the same for the gradient.
+        grad_weight = torch.cat(grad_W_groups, dim=0)
+        return grad_weight
+    
+    # def _calculate_gradient_weight_tensor_cheating(self,input_tensor,grad_output):
+    #     return torch.nn.grad.conv2d_weight(
+    #     input=input_tensor,
+    #     weight_size=self.weight.tensor.shape,
+    #     grad_output=grad_output,
+    #     stride=self.stride,
+    #     padding=self.padding,
+    #     dilation=self.dilation,
+    #     groups=self.groups
+    #     )
 #____________________________________________________________________________________________________________________________
 # BATCHNORM LAYERS
 class BatchNorm_Nd(Module):
