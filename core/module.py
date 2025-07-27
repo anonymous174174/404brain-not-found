@@ -382,7 +382,7 @@ class Linear_with_activation(Module):
 
 #____________________________________________________________________________________________________________________________
 #CONVOLUTION LAYERS ✅ Conv → BatchNorm → ReLU → MaxPool
-#still incomplete
+#complete but not tested
 class Conv2d(Module):
     def __new__(cls, *,in_channels, out_channels, kernel_size, stride=1,dilation=1,groups=1,bias=True, padding=0, graph=None,activation="relu"):
         assert isinstance(kernel_size, int) or len(kernel_size) == 2
@@ -562,6 +562,7 @@ class Conv2d(Module):
     #     )
 #____________________________________________________________________________________________________________________________
 # BATCHNORM LAYERS
+# complete but not Tested
 class BatchNorm_Nd(Module):
     def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
         assert num_features > 0
