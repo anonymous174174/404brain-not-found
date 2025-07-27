@@ -382,30 +382,54 @@ class Linear_with_activation(Module):
 
 #____________________________________________________________________________________________________________________________
 #CONVOLUTION LAYERS ✅ Conv → BatchNorm → ReLU → MaxPool
+#still incomplete
 class Conv2d(Module):
-    """Applies a 2D convolution over an input signal composed of several input planes."""
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, *, graph=None):
+    def __new__(cls, *,in_channels, out_channels, kernel_size, stride=1,dilation=1,groups=1,bias=True, padding=0, graph=None,activation="relu"):
+        assert isinstance(kernel_size, int) or len(kernel_size) == 2
+        assert isinstance(stride, int) or len(stride) == 2
+        assert isinstance(dilation, int) or len(dilation) == 2
+        assert isinstance(padding, int) or len(padding) == 2
+        assert activation in {"relu", "gelu", "leaky_relu", "sigmoid", "tanh", "silu", "elu", "gelu_approx"}
+        return super().__new__(cls)
+    def __init__(self, *,in_channels, out_channels, kernel_size, stride=1,dilation=1,groups=1,bias=True, padding=0, graph=None,activation="relu"):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
         self.stride = (stride, stride) if isinstance(stride, int) else stride
+        self.dilation = (dilation, dilation) if isinstance(dilation, int) else dilation
         self.padding = (padding, padding) if isinstance(padding, int) else padding
-        self.graph = graph
+        self.groups = groups
+        self.graph = weakref.proxy(graph)
 
-        # Weight and bias initialization
-        self.weight = CustomTensor(torch.empty(out_channels, in_channels, *self.kernel_size), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
-        self.bias = CustomTensor(torch.empty(out_channels), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
-        torch.nn.init.kaiming_uniform_(self.weight.tensor, a=math.sqrt(5))
-        fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight.tensor)
-        bound = 1 / math.sqrt(fan_in)
-        torch.nn.init.uniform_(self.bias.tensor, -bound, bound)
+        weight_shape = (out_channels, in_channels // groups, *self.kernel_size)
+        self.weight = CustomTensor(torch.empty(weight_shape), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
+        if activation in {"relu", "gelu", "silu", "elu","gelu_approx"}:
+            torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="relu")
+        elif activation == "leaky_relu":
+            torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="leaky_relu")
+        elif activation == "sigmoid":
+            torch.nn.init.xavier_uniform_(self.weight.tensor, gain=1.0)
+        elif activation == "tanh":
+            torch.nn.init.xavier_uniform_(self.weight.tensor, gain=5/3)
+        
+        if bias:
+            self.bias = CustomTensor(torch.zeros(out_channels), _custom_requires_grad=True, graph=self.graph, is_leaf=True)
+        else:
+            self.bias = None
 
     def forward(self, input_tensor):
-        # We can use torch.nn.functional.conv2d and define a custom backward pass.
-        # This is much simpler than implementing im2col/col2im manually.
-        output_tensor = F.conv2d(input_tensor.tensor, self.weight.tensor, self.bias.tensor, self.stride, self.padding)
-
+        output_tensor = F.conv2d(
+            input = input_tensor.tensor,
+            weight = self.weight.tensor,
+            bias = self.bias.tensor if self.bias else None,
+            stride = self.stride,
+            padding = self.padding,
+            groups=self.groups  
+        )
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
         requires_grad = input_tensor._custom_requires_grad or self.weight._custom_requires_grad
         if not requires_grad:
             return CustomTensor(output_tensor, due_to_operation=True)
@@ -414,36 +438,56 @@ class Conv2d(Module):
         self.graph.add_edge(input_tensor._node_id, result._node_id)
         self.graph.add_edge(self.weight._node_id, result._node_id)
         self.graph.add_edge(self.bias._node_id, result._node_id)
+
         
         input_ref = weakref.proxy(input_tensor)
         weight_ref = weakref.proxy(self.weight)
         bias_ref = weakref.proxy(self.bias)
         result_ref = weakref.proxy(result)
 
-        def _backward():
-            grad_output = result_ref.tensor.grad
+        # def _backward():
+        #     grad_output = result_ref.tensor.grad
             
-            # Gradient for input
-            if input_ref._custom_requires_grad:
-                if input_ref.tensor.grad is None: input_ref._zero_grad()
-                input_ref.tensor.grad.add_(
-                    torch.nn.grad.conv2d_input(input_ref.tensor.shape, weight_ref.tensor, grad_output, self.stride, self.padding)
-                )
+        #     # Gradient for input
+        #     if bias_ref._custom_requires_grad:
+        #         if bias_ref.tensor.grad is None: bias_ref._zero_grad()
+        #         bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
 
-            # Gradient for weights
-            if weight_ref._custom_requires_grad:
-                if weight_ref.tensor.grad is None: weight_ref._zero_grad()
-                weight_ref.tensor.grad.add_(
-                    torch.nn.grad.conv2d_weight(input_ref.tensor, weight_ref.tensor.shape, grad_output, self.stride, self.padding)
-                )
+        #     # Gradient for kernel/weights
+        #     # this is essentially a mathematical convolution of the input and the grad_output
+        #     # the formulation derivative sums in the N H and W demensions and requires shuffling of the dimensions of channel and batch before performing the convolution
+        #     # Input: (N, Cin, H, W) -> (Cin, N, H, W)
+        #     # GradOutput: (N, Cout, oH, oW) -> (Cout, N, oH, oW)
+        #     # The convolution is now effectively done with N as the channel dimension
+        #     if weight_ref._custom_requires_grad:
+        #         if weight_ref.tensor.grad is None: weight_ref._zero_grad()
+        #         transposed_input = input_ref.tensor.transpose(0, 1)
+        #         transposed_grad_output = grad_output.transpose(0, 1)
+        #         grad_weight = F.conv2d(transposed_input, transposed_grad_output, groups=input_ref.tensor.shape[1])
+        #         weight_ref.tensor.grad.add_(
+        #             torch.nn.grad.conv2d_weight(input_ref.tensor, weight_ref.tensor.shape, grad_output, self.stride, self.padding)
+        #         )
+        #     if input_ref._custom_requires_grad:
+        #         if input_ref.tensor.grad is None: input_ref._zero_grad()
+        #         input_ref.tensor.grad.add_(
+        #             torch.nn.grad.conv2d_input(input_ref.tensor.shape, weight_ref.tensor, grad_output, self.stride, self.padding)
+        #         )
 
-            # Gradient for bias
-            if bias_ref._custom_requires_grad:
-                if bias_ref.tensor.grad is None: bias_ref._zero_grad()
-                bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
+        #     # Gradient for weights
+        #     if weight_ref._custom_requires_grad:
+        #         if weight_ref.tensor.grad is None: weight_ref._zero_grad()
+        #         weight_ref.tensor.grad.add_(
+        #             torch.nn.grad.conv2d_weight(input_ref.tensor, weight_ref.tensor.shape, grad_output, self.stride, self.padding)
+        #         )
 
-        result._backward = _backward
-        return result
+        #     # Gradient for bias
+        #     if bias_ref._custom_requires_grad:
+        #         if bias_ref.tensor.grad is None: bias_ref._zero_grad()
+        #         bias_ref.tensor.grad.add_(grad_output.sum(dim=[0, 2, 3]))
+
+        # result._backward = _backward
+        # return result
+
 #____________________________________________________________________________________________________________________________
 # BATCHNORM LAYERS
 class BatchNorm_Nd(Module):
