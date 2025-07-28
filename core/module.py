@@ -281,90 +281,90 @@ class Linear(Module):
 
     def __repr__(self):
         return f"Linear(in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None})"
-class Linear_with_activation(Module):
-    """Applies a linear transformation to the incoming data: y = xA^T + b and activation to it
-    types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
-    def __new__(cls, in_features, out_features, bias=True, *, graph=None,activation="relu"):
-        assert activation in {"relu", "gelu", "leaky_relu", "sigmoid", "tanh", "silu", "elu", "gelu_approx"}
-        return super().__new__(cls)
-    def __init__(self, in_features, out_features, bias=True, *, graph=None,activation="relu"):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.graph = weakref.proxy(graph)
-        self.activation = activation
+# class Linear_with_activation(Module):
+#     """Applies a linear transformation to the incoming data: y = xA^T + b and activation to it
+#     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
+#     def __new__(cls, in_features, out_features, bias=True, *, graph=None,activation="relu"):
+#         assert activation in {"relu", "gelu", "leaky_relu", "sigmoid", "tanh", "silu", "elu", "gelu_approx"}
+#         return super().__new__(cls)
+#     def __init__(self, in_features, out_features, bias=True, *, graph=None,activation="relu"):
+#         super().__init__()
+#         self.in_features = in_features
+#         self.out_features = out_features
+#         self.graph = weakref.proxy(graph)
+#         self.activation = activation
         
-        self.weight = CustomTensor(torch.empty(out_features, in_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
-        if activation in {"relu", "gelu", "silu", "elu","gelu_approx"}:
-            torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="relu")
-        elif activation == "leaky_relu":
-            torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="leaky_relu")
-        elif activation == "sigmoid":
-            torch.nn.init.xavier_uniform_(self.weight.tensor, gain=1.0)
-        elif activation == "tanh":
-            torch.nn.init.xavier_uniform_(self.weight.tensor, gain=5/3)
+#         self.weight = CustomTensor(torch.empty(out_features, in_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
+#         if activation in {"relu", "gelu", "silu", "elu","gelu_approx"}:
+#             torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="relu")
+#         elif activation == "leaky_relu":
+#             torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity="leaky_relu")
+#         elif activation == "sigmoid":
+#             torch.nn.init.xavier_uniform_(self.weight.tensor, gain=1.0)
+#         elif activation == "tanh":
+#             torch.nn.init.xavier_uniform_(self.weight.tensor, gain=5/3)
         
-        if bias:
-            self.bias = CustomTensor(torch.zeros(out_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
-            # fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight.tensor)
-            # bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-            # torch.nn.init.uniform_(self.bias.tensor, -bound, bound)
-        else:
-            self.bias = None
-    def forward(self, input_tensor):
+#         if bias:
+#             self.bias = CustomTensor(torch.zeros(out_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
+#             # fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight.tensor)
+#             # bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+#             # torch.nn.init.uniform_(self.bias.tensor, -bound, bound)
+#         else:
+#             self.bias = None
+#     def forward(self, input_tensor):
         
-        activation = self.activation
-        pre_activation = input_tensor.tensor @ self.weight.tensor.transpose(-2, -1)
-        if self.bias is not None:
-            pre_activation.add_(self.bias.tensor)
+#         activation = self.activation
+#         pre_activation = input_tensor.tensor @ self.weight.tensor.transpose(-2, -1)
+#         if self.bias is not None:
+#             pre_activation.add_(self.bias.tensor)
 
-        output = ACTIVATIONS[activation](pre_activation)
-        if not self.training:
-            return CustomTensor(output, due_to_operation=True)
-        graph = self.graph
-        result = CustomTensor(output, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
+#         output = ACTIVATIONS[activation](pre_activation)
+#         if not self.training:
+#             return CustomTensor(output, due_to_operation=True)
+#         graph = self.graph
+#         result = CustomTensor(output, _custom_requires_grad=True, graph=graph, due_to_operation=True, is_leaf=False)
         
-        if input_tensor._custom_requires_grad:
-            graph.add_edge(input_tensor._node_id, result._node_id)
-        graph.add_edge(self.weight._node_id, result._node_id)
-        if self.bias is not None:
-            graph.add_edge(self.bias._node_id, result._node_id)
+#         if input_tensor._custom_requires_grad:
+#             graph.add_edge(input_tensor._node_id, result._node_id)
+#         graph.add_edge(self.weight._node_id, result._node_id)
+#         if self.bias is not None:
+#             graph.add_edge(self.bias._node_id, result._node_id)
 
-        weight_ref = weakref.proxy(self.weight)
-        input_tensor_ref = weakref.proxy(input_tensor)
-        result_ref = weakref.proxy(result)
-        bias_ref = weakref.proxy(self.bias) if self.bias is not None else None
+#         weight_ref = weakref.proxy(self.weight)
+#         input_tensor_ref = weakref.proxy(input_tensor)
+#         result_ref = weakref.proxy(result)
+#         bias_ref = weakref.proxy(self.bias) if self.bias is not None else None
 
 
-        def _backward():
-            d_activation_d_pre_activation = ACTIVATIONS_GRADIENT[activation](pre_activation)
-            pre_activation_grad = d_activation_d_pre_activation*result_ref.tensor.grad
-            if weight_ref._custom_requires_grad:
-                if weight_ref.tensor.grad is None:
-                    weight_ref._zero_grad()
+#         def _backward():
+#             d_activation_d_pre_activation = ACTIVATIONS_GRADIENT[activation](pre_activation)
+#             pre_activation_grad = d_activation_d_pre_activation*result_ref.tensor.grad
+#             if weight_ref._custom_requires_grad:
+#                 if weight_ref.tensor.grad is None:
+#                     weight_ref._zero_grad()
                 
-                grad_w = torch.matmul(pre_activation_grad.transpose(-2, -1), input_tensor_ref.tensor)
-                weight_ref.tensor.grad.add_(weight_ref._reduce_grad_for_broadcast(grad_w, weight_ref.tensor.shape))
+#                 grad_w = torch.matmul(pre_activation_grad.transpose(-2, -1), input_tensor_ref.tensor)
+#                 weight_ref.tensor.grad.add_(weight_ref._reduce_grad_for_broadcast(grad_w, weight_ref.tensor.shape))
             
 
-            if bias_ref is not None:
-                if bias_ref._custom_requires_grad:
-                    if bias_ref.tensor.grad is None:
-                        bias_ref._zero_grad()
-                    grad_b = bias_ref._reduce_grad_for_broadcast(pre_activation_grad, bias_ref.tensor.shape)
-                    bias_ref.tensor.grad.add_(grad_b)
+#             if bias_ref is not None:
+#                 if bias_ref._custom_requires_grad:
+#                     if bias_ref.tensor.grad is None:
+#                         bias_ref._zero_grad()
+#                     grad_b = bias_ref._reduce_grad_for_broadcast(pre_activation_grad, bias_ref.tensor.shape)
+#                     bias_ref.tensor.grad.add_(grad_b)
             
-            if input_tensor_ref._custom_requires_grad:
-                if input_tensor_ref.tensor.grad is None:
-                    input_tensor_ref._zero_grad()
-                grad_in = torch.matmul(pre_activation_grad, weight_ref.tensor)
-                input_tensor_ref.tensor.grad.add_(input_tensor_ref._reduce_grad_for_broadcast(grad_in, input_tensor_ref.tensor.shape))
+#             if input_tensor_ref._custom_requires_grad:
+#                 if input_tensor_ref.tensor.grad is None:
+#                     input_tensor_ref._zero_grad()
+#                 grad_in = torch.matmul(pre_activation_grad, weight_ref.tensor)
+#                 input_tensor_ref.tensor.grad.add_(input_tensor_ref._reduce_grad_for_broadcast(grad_in, input_tensor_ref.tensor.shape))
         
-        result.backward = _backward
-        return result
+#         result.backward = _backward
+#         return result
 
-    def __repr__(self):
-        return f"Linear(in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None})"
+#     def __repr__(self):
+#         return f"Linear(in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None})"
 
 #____________________________________________________________________________________________________________________________
 #CONVOLUTION LAYERS ✅ Conv → BatchNorm → ReLU → MaxPool
@@ -974,12 +974,7 @@ class GeLu(Module):
             u = sqrt_2_over_pi * inner
             tanh_u = torch.tanh(u)
             poly = 1 + 3 * coeff_cubic * x2
-            return (0.5 * tanh_u + 0.5 * (1 - tanh_u.square()) * (sqrt_2_over_pi * poly * x) + 0.5) * grad_output
-
-# "sigmoid": F.sigmoid,
-# "tanh": F.tanh,
-# "silu": F.silu,
-# "elu": partial(F.elu, alpha=elu_alpha),        
+            return (0.5 * tanh_u + 0.5 * (1 - tanh_u.square()) * (sqrt_2_over_pi * poly * x) + 0.5) * grad_output    
 class Sigmoid(Module):
     def __new__(cls,*,graph=None):
         super().__new__(cls)
@@ -1092,8 +1087,44 @@ class Elu(Module):
         result._backward = _backward
         return result
 
+class Swish(Module):
 
+    # TODO: implement in future
+    def __new__(cls,*,B_initial=1.0,graph=None):
+        assert B_initial > 0
+        super().__new__(cls)
+    def __init__(self,*,B_initial=1.0,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+        self.B = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.B_initial = B_initial
+    
+    def forward(self, input_tensor):
+        scale = self.B.tensor.item()
+        output_tensor = F.silu(scale*input_tensor.tensor)/scale
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+        graph.add_edge(self.B._node_id,result._node_id)
 
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+        B_ref = weakref.proxy(self.B)
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            if B_ref.tensor.grad is None:
+                B_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            sig_B_x = output_tensor/input_ref.tensor
+            common = sig_B_x*(1-sig_B_x)*grad_output
 
-
+            grad_input = sig_B_x*grad_output+input_ref.tensor*B_ref.tensor*common
+            grad_B = input_ref.tensor.square()*common
+            input_ref.tensor.grad.add_(grad_input)
+            B_ref.tensor.grad.add_(grad_B.sum())
+        result._backward = _backward
+        return result
 
