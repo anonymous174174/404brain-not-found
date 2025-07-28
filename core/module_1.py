@@ -1012,4 +1012,5 @@ class Swish(Module):
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
-
+if __name__ == "__main__":
+    pass
