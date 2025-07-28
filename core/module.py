@@ -152,7 +152,7 @@ class Linear(Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.graph = weakref.proxy(graph)
+        self.graph = weakref.proxy(graph) if graph is not None else None
         
         self.weight = CustomTensor(torch.empty(out_features, in_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
         if activation in {"relu", "gelu", "silu", "elu","gelu_approx"}:
@@ -366,20 +366,6 @@ class Linear_with_activation(Module):
     def __repr__(self):
         return f"Linear(in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None})"
 
-# class Linear_with_batch_norm_and_activations(Module):
-#     """Applies a linear transformation to the incoming data: y = xA^T + b and batchnorm then activation
-#     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu, gelu_approx"""
-#     def __new__(cls, in_features, out_features, bias=True, *, graph=None,activation="relu"):
-#         assert activation in {"relu", "gelu", "leaky_relu", "sigmoid", "tanh", "silu", "elu", "gelu_approx"}
-#         return super().__new__(cls)
-#     def __init__(self, in_features, out_features, bias=True, *, graph=None,activation="relu"):
-#         super().__init__()
-#         self.in_features = in_features
-#         self.out_features = out_features
-#         self.graph = weakref.proxy(graph)
-        
-#         self.linear = Linear(in_features, out_features, bias=bias, graph=graph,activation=activation)
-
 #____________________________________________________________________________________________________________________________
 #CONVOLUTION LAYERS ✅ Conv → BatchNorm → ReLU → MaxPool
 #complete but not tested
@@ -497,11 +483,29 @@ class Conv2d(Module):
             groups=self.groups
         )
         return grad_input
-    
+    @torch.compille
     def _calculate_gradient_weight_tensor_loop(self,input_tensor,grad_output):
         #The gradient w.r.t. the weights is a convolution
         # of the input (X) and the output gradient (grad_output).
         # For grouped convolutions, we must perform this calculation for each group separately.
+        #O(b,co,oh,ow)=B(co)+ kh =0∑KH −1  kw =0∑KW −1  ci=(co/G)⋅(Cin/G)∑((co/G)+1)⋅(Cin/G)−1
+        #  Ipadded(b,ci,ih,iw)K(co ,ci ,kh ,kw ),
+        # where ih  = oh.sh+kh.dh, iw = ow.sw+kw.dw
+
+        # ∂L/∂K(ci′ ,co′ ,kh′ ,kw′ ) =b,oh,ow∑ G(b,co',oh,ow) 
+        # Ipadded(b,ci', oh.sh + kh'.dh, ow.sw + kw'.dw)
+
+        # the original operation is a summation over kh and kw and the input image 
+        # coordinates ih iw are sampled with dilation. (oh and ow for individual coordinates are constant)
+
+
+        # the equation for the gradient is a summation over oh and ow and the input image 
+        # coordinates ih iw are sampled with stride. 
+        # (kh and kw are constant for individual coordinates are constant)
+
+        # hence when calling conv2d we need to switch stride and dilation
+        # and also transpose the dimensions of batch and channel as for derivative with respect to weight the channels are fixed in the summation 
+
         in_channels = self.in_channels
         groups = self.groups
         out_channels = self.out_channels
@@ -562,7 +566,7 @@ class Conv2d(Module):
     #     )
 #____________________________________________________________________________________________________________________________
 # BATCHNORM LAYERS
-# complete but not Tested
+# complete but not tested (gradient calculation logic has been tested)
 class BatchNorm_Nd(Module):
     def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
         assert num_features > 0
@@ -679,5 +683,417 @@ class BatchNorm_Nd(Module):
         term_2 = (-1/total_elements)*result_gradient.sum(dim=reduce_dims, keepdim=True)
         term3_sum_component = (input_minus_mean*result_gradient).sum(dim=reduce_dims, keepdim=True)
         term3 = inv_std**2 * (-1/total_elements) * input_minus_mean * term3_sum_component
-        return outer_term * (term_1 + term_2 + term3)
+        return outer_term * (term_1 + term_2 + term3)       
+#____________________________________________________________________________________________________________________________
+# POOLING LAYERS
+
+class MaxPool2d(Module):
+    def __new__(cls, *,kernel_size, stride=1, padding=0,dilation=1):
+        assert isinstance(kernel_size, int) or len(kernel_size) == 2
+        assert isinstance(stride, int) or len(stride) == 2
+        assert isinstance(dilation, int) or len(dilation) == 2
+        assert isinstance(padding, int) or len(padding) == 2
+        super().__new__(cls)
+    def __init__(self, *,kernel_size, stride=1, padding=0,dilation=1,graph=None):
+        super().__init__()
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = (stride, stride) if isinstance(stride, int) else stride
+        self.dilation = (dilation, dilation) if isinstance(dilation, int) else dilation
+        self.padding = (padding, padding) if isinstance(padding, int) else padding
+
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self,input_tensor):
+        kernel_size = self.kernel_size
+        stride = self.stride
+        padding = self.padding
+        dilation = self.dilation
+        output_tensor, max_indices = F.max_pool2d(
+            input=input_tensor.tensor,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            return_indices=True
+        )
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        graph = self.graph
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=graph, is_leaf=False)
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+        cached_indices = max_indices
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            # max_unpool2d acts as a "gradient router", placing the incoming gradients
+            # at the locations of the original maximum values.
+            
+            max_unpool = F.max_unpool2d(
+                input=result_ref.tensor.grad,
+                indices=cached_indices,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                output_size=input_ref.tensor.shape
+            )
+            input_ref.tensor.grad.add_(max_unpool)
+
+        result._backward = _backward
+        return result
+    def __repr__(self):
+        return f"MaxPool2d(kernel_size={self.kernel_size}, stride={self.stride}, padding={self.padding})"
+
+class AvgPool2d(Module):
+
+    def __new__(cls, *,kernel_size,stride=1,padding=0,graph = None):
+        assert isinstance(kernel_size, int) or len(kernel_size) == 2
+        assert isinstance(stride, int) or len(stride) == 2
+        assert isinstance(padding, int) or len(padding) == 2
+        super().__new__(cls)
+
+    def __init__(self, *,kernel_size,stride=1,padding=0,graph = None):
+        super().__init__()
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = (stride, stride) if isinstance(stride, int) else stride
+        self.padding = (padding, padding) if isinstance(padding, int) else padding
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self, input_tensor):
+        kernel_size = self.kernel_size
+        stride = self.stride
+        padding = self.padding
+        output_tensor = F.avg_pool2d(
+            input=input_tensor.tensor,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            count_include_pad=True
+        )
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
         
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            h_in, w_in = input_ref.shape[2], input_ref.shape[3]
+            h_out, w_out = grad_output.shape[2], grad_output.shape[3]
+            stride = self.stride
+            padding = self.padding
+            kernel_size = self.kernel_size
+            # The formula relating input size to output size in a transposed convolution is:
+            # InputSize = (OutputSize - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
+            # We rearrange this to solve for the required output_padding.
+            output_padding_h = h_in - ((h_out - 1) * stride[0] - 2 * padding[0] +  (kernel_size[0] - 1) + 1)
+            output_padding_w = w_in - ((w_out - 1) * stride[1] - 2 * padding[1] +  (kernel_size[1] - 1) + 1)
+            output_padding = (output_padding_h, output_padding_w)
+
+            pool_size = self.kernel_size[0] * self.kernel_size[1]
+            grad_kernel = torch.ones(grad_output.shape[1], 1, self.kernel_size[0], self.kernel_size[1]) / pool_size
+            grad_input = F.conv_transpose2d(
+                input= grad_output,
+                weight = grad_kernel,
+                stride = self.stride,
+                padding = self.padding,
+                output_padding=output_padding,
+                groups = input_ref.tensor.shape[1] 
+            )
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result 
+
+
+class GlobalAvgPool2d(Module):
+    def __new__(cls,*,graph=None):
+        super().__new__(cls)
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+    def forward(self, input_tensor):
+        output_tensor = input_tensor.tensor.mean(dim=[-2, -1], keepdim=True)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            output_grad= result_ref.tensor.grad 
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_input = output_grad/(input_ref.tensor.shape[-2] * input_ref.tensor.shape[-1])
+            grad_input = grad_input.expand(input_ref.tensor.shape)
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+    
+class GlobalMaxPool2d(Module):
+    def __new__(cls,*,graph=None):
+        super().__new__(cls)
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+    def forward(self, input_tensor):
+        output_tensor,indices = F.adaptive_max_pool2d(
+            input=input_tensor.tensor,
+            output_size=(1,1),
+            return_indices=True
+        )
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            output_grad= result_ref.tensor.grad 
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_input = torch.zeros_like(input_ref.tensor)
+            grad_input.view(-1)[indices.view(-1)] = output_grad.view(-1)
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+    
+#____________________________________________________________________________________________________________________________
+# Activations
+class ReLu(Module):
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self, input_tensor):
+        output_tensor = F.relu(input_tensor.tensor)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = grad_output.clone()
+            grad_input[input_ref.tensor < 0] = 0
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+    
+class Leaky_ReLu(Module):
+    def __new__(cls,*,negative_slope=0.01,graph=None):
+        assert negative_slope > 0
+        super().__new__(cls)
+    def __init__(self,*,negative_slope=0.01,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+        self.negative_slope = negative_slope
+
+    def forward(self, input_tensor):
+        output_tensor = F.leaky_relu(input_tensor.tensor, negative_slope=self.negative_slope)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = grad_output.clone()
+            grad_input[input_ref.tensor < 0] *= self.negative_slope
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+
+class GeLu(Module):
+    def __new__(cls,*,approximate='none',graph=None):
+        assert approximate in {"none","tanh"}
+        super().__new__(cls)
+    def __init__(self,*,approximate='none',graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+        self.approximate = approximate
+
+    def forward(self, input_tensor):
+        output_tensor = F.gelu(input_tensor.tensor,approximate=self.approximate)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = GeLu.gelu_derivative(input_ref.tensor,grad_output,self.approximate) 
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+    
+    @torch.compile
+    @staticmethod
+    def gelu_derivative(x: torch.Tensor, grad_output: torch.Tensor,approximate: str) -> torch.Tensor:
+        if approximate =="none":
+            sqrt_2_pi = 2.5066282749176025 #torch.tensor(2 * torch.pi).sqrt()
+            phi_x_cdf = 0.5 * (1 + torch.special.erf(x / 1.4142135381698608)) #torch.sqrt(torch.tensor(2.0))))
+            phi_x_pdf = torch.exp(-0.5 * x**2) / sqrt_2_pi
+            return (phi_x_cdf + x * phi_x_pdf) * grad_output
+        else:
+            sqrt_2_over_pi = 0.7978845238685608 #torch.tensor(2.0 / torch.pi).sqrt()
+            coeff_cubic = 0.044715
+            x2 = x.square()
+            inner = x + coeff_cubic * x2 * x
+            u = sqrt_2_over_pi * inner
+            tanh_u = torch.tanh(u)
+            poly = 1 + 3 * coeff_cubic * x2
+            return (0.5 * tanh_u + 0.5 * (1 - tanh_u.square()) * (sqrt_2_over_pi * poly * x) + 0.5) * grad_output
+
+# "sigmoid": F.sigmoid,
+# "tanh": F.tanh,
+# "silu": F.silu,
+# "elu": partial(F.elu, alpha=elu_alpha),        
+class Sigmoid(Module):
+    def __new__(cls,*,graph=None):
+        super().__new__(cls)
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self, input_tensor):
+        output_tensor = F.sigmoid(input_tensor.tensor)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = grad_output * output_tensor * (1 - output_tensor)
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+
+class Tanh(Module):
+    def __new__(cls,*,graph=None):
+        super().__new__(cls)
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self,input_tensor):
+        output_tensor = F.tanh(input_tensor.tensor)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = grad_output * (1 - output_tensor**2)
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+    
+class Silu(Module):
+    def __new__(cls,*,graph=None):
+        super().__new__(cls)
+    def __init__(self,*,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+
+    def forward(self,input_tensor):
+        output_tensor = F.silu(input_tensor.tensor)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            s_input_tensor = output_tensor/input_ref.tensor
+            grad_input = grad_output*(s_input_tensor+output_tensor*(1-s_input_tensor))
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+
+class Elu(Module):
+    def __new__(cls,*,alpha=1.0,graph=None):
+        assert alpha > 0
+        super().__new__(cls)
+    def __init__(self,*,alpha=1.0,graph=None):
+        super().__init__()
+        self.graph = weakref.proxy(graph) if graph is not None else None
+        self.alpha = alpha
+
+    def forward(self,input_tensor):
+        output_tensor = F.elu(input_tensor.tensor, alpha=self.alpha)
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, is_leaf=False)
+        graph = self.graph
+        graph.add_edge(input_tensor._node_id,result._node_id)
+
+        input_ref = weakref.proxy(input_tensor)
+        result_ref = weakref.proxy(result)
+
+        def _backward():
+            if input_ref.tensor.grad is None:
+                input_ref._zero_grad()
+            grad_output = result_ref.tensor.grad
+            grad_input = grad_output.clone()
+            mask_neg = (input_ref.tensor.data < 0)
+            grad_input[mask_neg] *= (self.alpha+output_tensor[mask_neg])
+            input_ref.tensor.grad.add_(grad_input)
+        result._backward = _backward
+        return result
+
+
+
+
+
+

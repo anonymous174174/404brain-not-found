@@ -49,7 +49,8 @@ logging.info(device_summary)
 __all__ = []
 from . import (
     tensor,
-    autograd_graph
+    autograd_graph,
+    module
 )
 
 if __name__ == "__main__":
