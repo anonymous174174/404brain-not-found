@@ -77,9 +77,8 @@ class AutogradGraph:
     def delete_all_non_leaf_nodes(self):
         # removes non leaf nodes from graph and clears the intermediate_tensors dict
         self.graph.remove_nodes_from(list(self.intermediate_tensors.keys()))
+        for custom_tensor in self.intermediate_tensors.values():custom_tensor.clear()
         self.intermediate_tensors.clear()
 
     def __repr__(self):
         return f"CustomAutogradGraph(nodes={self.graph.num_nodes()}, edges={self.graph.num_edges()})"
-if __name__ == "__main__":
-    pass

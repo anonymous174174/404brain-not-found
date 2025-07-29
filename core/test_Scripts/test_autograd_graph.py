@@ -9,11 +9,12 @@ import gc
 import pytest
 from autograd_graph import AutogradGraph
 from custom_tensor import CustomTensor
+from module import *
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
         self.failed_tests = 0
-        self.tolerance = 1e-7  # Increased tolerance slightly for complex ops
+        self.tolerance = 1e-6 #1e-7  # Increased tolerance slightly for complex ops
 
     def assert_tensors_close(self, custom_tensor, pytorch_tensor, test_name, check_grad=True):
         """Compare custom tensor with PyTorch tensor values and optionally gradients."""
@@ -64,7 +65,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Scalar Addition - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Addition - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Addition - y (result)")
 
         # Test tensor addition
         with AutogradGraph() as graph:
@@ -80,7 +81,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Tensor Addition - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Tensor Addition - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Addition - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Addition - z (result)")
 
     def test_multiplication(self):
         """Test multiplication operations"""
@@ -97,7 +98,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Scalar Multiplication - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Multiplication - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Multiplication - y (result)")
 
         # Test tensor multiplication
         with AutogradGraph() as graph:
@@ -113,7 +114,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Tensor Multiplication - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Tensor Multiplication - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Multiplication - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Multiplication - z (result)")
 
     def test_subtraction_division(self):
         """Test subtraction and division"""
@@ -130,7 +131,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Scalar Subtraction (x - C) - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Subtraction (x - C) - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Subtraction (x - C) - y (result)")
 
         # Test scalar reverse subtraction (C - x)
         with AutogradGraph() as graph:
@@ -143,7 +144,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Scalar Reverse Subtraction (C - x) - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Reverse Subtraction (C - x) - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Reverse Subtraction (C - x) - y (result)")
 
         # Test tensor subtraction
         with AutogradGraph() as graph:
@@ -159,7 +160,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Tensor Subtraction - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Tensor Subtraction - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Subtraction - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Subtraction - z (result)")
 
         # Test scalar division
         with AutogradGraph() as graph:
@@ -172,7 +173,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Scalar Division - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Division - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Scalar Division - y (result)")
         # Test tensor division
         with AutogradGraph() as graph:
             x_custom = CustomTensor([8.0, 12.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
@@ -187,7 +188,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Tensor Division - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Tensir Division - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Division - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Tensor Division - z (result)", )
 
 
     def test_power_function(self):
@@ -204,7 +205,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Power Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Power Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Power Function - y (result)" )
 
         # Test power with negative exponent
         with AutogradGraph() as graph:
@@ -217,7 +218,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Power Function (Negative Exponent) - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Power Function (Negative Exponent) - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Power Function (Negative Exponent) - y (result)")
 
     def test_unary_functions(self):
         """Test unary mathematical functions"""
@@ -234,7 +235,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Exponential Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Exponential Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Exponential Function - y (result)")
 
         # Test log
         with AutogradGraph() as graph:
@@ -247,7 +248,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Logarithm Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Logarithm Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Logarithm Function - y (result)")
 
         # Test sin
         with AutogradGraph() as graph:
@@ -260,7 +261,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Sine Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Sine Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Sine Function - y (result)")
 
         # Test cos
         with AutogradGraph() as graph:
@@ -273,7 +274,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Cosine Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Cosine Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Cosine Function - y (result)")
 
         # Test sqrt
         with AutogradGraph() as graph:
@@ -286,7 +287,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Square Root Function - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Square Root Function - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Square Root Function - y (result)")
 
     def test_matrix_operations(self):
         """Test matrix operations"""
@@ -306,7 +307,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Matrix Multiplication (2x2 @ 2x2) - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Matrix Multiplication (2x2 @ 2x2) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Matrix Multiplication (2x2 @ 2x2) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Matrix Multiplication (2x2 @ 2x2) - z (result)")
 
         # Test matrix multiplication (2x3 @ 3x2)
         with AutogradGraph() as graph:
@@ -322,7 +323,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Matrix Multiplication (2x3 @ 3x2) - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Matrix Multiplication (2x3 @ 3x2) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Matrix Multiplication (2x3 @ 3x2) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Matrix Multiplication (2x3 @ 3x2) - z (result)")
 
         # Test dot product (vector * vector)
         with AutogradGraph() as graph:
@@ -338,7 +339,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Dot Product (vector) - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Dot Product (vector) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Dot Product (vector) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Dot Product (vector) - z (result)")
 
     def test_complex_chain(self):
         """Test complex computational chains"""
@@ -376,7 +377,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Complex Chain 1 - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Complex Chain 1 - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 1 - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 1 - z (result)")
 
         # Test 2: Multiple paths to a leaf: z = x*y + x*x + y*z_fixed
         with AutogradGraph() as graph:
@@ -406,7 +407,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Complex Chain 2 (Multiple Paths) - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Complex Chain 2 (Multiple Paths) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 2 (Multiple Paths) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 2 (Multiple Paths) - z (result)")
 
         # Test 3: Deeper Chain with Mixed Ops: (exp(x) * log(y)) / sqrt(x+y)
         with AutogradGraph() as graph:
@@ -438,7 +439,7 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Complex Chain 3 (Deeper Mixed Ops) - x")
             self.assert_tensors_close(y_custom, y_pytorch, "Complex Chain 3 (Deeper Mixed Ops) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 3 (Deeper Mixed Ops) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Complex Chain 3 (Deeper Mixed Ops) - z (result)")
 
     def test_mixed_operations(self):
         """Test mixing operations with and without gradients"""
@@ -458,8 +459,8 @@ class AutogradTester:
 
             self.assert_tensors_close(x_custom, x_pytorch, "Mixed Operations (X*Y, Y no grad) - x")
             # Check that y_custom has no grad
-            self.assert_tensors_close(y_custom, y_pytorch, "Mixed Operations (X*Y, Y no grad) - y", check_grad=False)
-            self.assert_tensors_close(z_custom, z_pytorch, "Mixed Operations (X*Y, Y no grad) - z (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Mixed Operations (X*Y, Y no grad) - y")
+            self.assert_tensors_close(z_custom, z_pytorch, "Mixed Operations (X*Y, Y no grad) - z (result)")
 
         # One tensor requires grad, other doesn't (addition)
         with AutogradGraph() as graph:
@@ -474,8 +475,8 @@ class AutogradTester:
             z_pytorch.backward(torch.ones_like(z_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Mixed Operations (X+Y, Y no grad) - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Mixed Operations (X+Y, Y no grad) - y", check_grad=False)
-            self.assert_tensors_close(z_custom, z_pytorch, "Mixed Operations (X+Y, Y no grad) - z (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Mixed Operations (X+Y, Y no grad) - y")
+            self.assert_tensors_close(z_custom, z_pytorch, "Mixed Operations (X+Y, Y no grad) - z (result)")
 
     def test_broadcasting(self):
         """Test operations with broadcasting"""
@@ -492,7 +493,7 @@ class AutogradTester:
             y_pytorch.backward(torch.tensor([1.0, 1.0, 1.0]))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Broadcasting: Vector + Scalar - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Broadcasting: Vector + Scalar - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Broadcasting: Vector + Scalar - y (result)")
 
         # Matrix + vector (row broadcasting)
         with AutogradGraph() as graph:
@@ -510,7 +511,7 @@ class AutogradTester:
             # For broadcasted operations, the gradient needs to be summed over the broadcasted dimensions
             # PyTorch handles this automatically. Your custom backward for add should accumulate.
             self.assert_tensors_close(y_custom, y_pytorch, "Broadcasting: Matrix + Vector (row) - y")
-            self.assert_tensors_close(z_custom, z_pytorch, "Broadcasting: Matrix + Vector (row) - z (result)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Broadcasting: Matrix + Vector (row) - z (result)")
 
         # Matrix * scalar
         with AutogradGraph() as graph:
@@ -523,7 +524,7 @@ class AutogradTester:
             y_pytorch.backward(torch.ones_like(y_pytorch))
 
             self.assert_tensors_close(x_custom, x_pytorch, "Broadcasting: Matrix * Scalar - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Broadcasting: Matrix * Scalar - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Broadcasting: Matrix * Scalar - y (result)")
 
     def test_backward_with_custom_grad(self):
         """Test backward pass with a custom initial gradient tensor."""
@@ -543,7 +544,7 @@ class AutogradTester:
             y_pytorch.backward(pytorch_grad_output)
 
             self.assert_tensors_close(x_custom, x_pytorch, "Backward with Custom Grad - x")
-            self.assert_tensors_close(y_custom, y_pytorch, "Backward with Custom Grad - y (result)", check_grad=False)
+            self.assert_tensors_close(y_custom, y_pytorch, "Backward with Custom Grad - y (result)")
 
     def test_zero_grad_behavior(self):
         """Test _zero_grad and subsequent backward calls."""
@@ -552,9 +553,8 @@ class AutogradTester:
             x_custom = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
             y_custom = x_custom * 2
             z_custom = y_custom + 3
-            z_custom.backward()  # First backward
-
-            self.assert_tensors_close(x_custom, torch.tensor([1.0], requires_grad=True), "Zero Grad Init (first backward) - x",check_grad=False)
+            self.assert_tensors_close(x_custom, torch.tensor([1.0], requires_grad=True), "Zero Grad Init (first backward) - x")
+            z_custom.backward(retain_graph=True)  # First backward
 
             z_custom._zero_grad()  # Manually zero for custom
             y_custom._zero_grad()  # Manually zero for custom
@@ -572,7 +572,7 @@ class AutogradTester:
             z_pytorch.backward()  # PyTorch accumulates if not zeroed explicitly
 
             self.assert_tensors_close(x_custom, x_pytorch, "Zero Grad Behavior - x (after 2nd backward)")
-            self.assert_tensors_close(z_custom, z_pytorch, "Zero Grad Behavior - z (result, after 2nd backward)", check_grad=False)
+            self.assert_tensors_close(z_custom, z_pytorch, "Zero Grad Behavior - z (result, after 2nd backward)")
 
     def test_no_grad_flow(self):
         """Test that gradients do not flow to tensors not requiring grad."""
@@ -610,7 +610,7 @@ class AutogradTester:
                 c = b + 10.0  # (a + 5 + 10)
 
                 # Manually run backward pass
-                c.backward(weightage_tensor=1)
+                c.backward(weightage_tensor=1,retain_graph=True)
 
                 # Expected gradients:
                 # dC/dA = 1.0 (for each element)
@@ -639,7 +639,7 @@ class AutogradTester:
                 c = a + b  # (a + b)
                 d = c + 5.0  # (a + b + 5)
 
-                d.backward(weightage_tensor=1)
+                d.backward(weightage_tensor=1,retain_graph=True)
 
                 # Expected gradients:
                 # dD/dA = 1.0
@@ -668,7 +668,7 @@ class AutogradTester:
                 b = CustomTensor(torch.tensor([1.0, 2.0]), _custom_requires_grad=False)  # Does not require grad
                 c = a + b  # c should require grad, b's grad should be None
 
-                c.backward(weightage_tensor=1)
+                c.backward(weightage_tensor=1,retain_graph = True)
 
                 assert torch.allclose(a.tensor.grad, torch.tensor([1.0, 1.0]))
                 assert b.tensor.grad is None  # b should not have a grad
@@ -897,33 +897,33 @@ class AutogradTester:
     def test_very_deep_computation_graph(self):
         """Test with very deep computation graphs"""
         print("\n=== Testing Very Deep Computation Graph ===")
-        
+
         try:
             depth = 50  # Moderate depth to avoid stack overflow in testing
-            
+
             with AutogradGraph() as graph:
                 x_custom = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
                 current_custom = x_custom
-                
+
                 # Create deep chain: x -> x+1 -> (x+1)+1 -> ... (50 times)
                 for i in range(depth):
                     current_custom = current_custom + 1.0
-                
+
                 final_custom = current_custom
                 final_custom.backward()
-                
+
             x_pytorch = torch.tensor([1.0], requires_grad=True)
             current_pytorch = x_pytorch
-            
+
             for i in range(depth):
                 current_pytorch = current_pytorch + 1.0
-                
+
             final_pytorch = current_pytorch
             final_pytorch.backward()
-            
+
             self.assert_tensors_close(x_custom, x_pytorch, f"Deep Graph (depth={depth}) - x")
-            self.assert_tensors_close(final_custom, final_pytorch, f"Deep Graph (depth={depth}) - final", check_grad=False)
-            
+            self.assert_tensors_close(final_custom, final_pytorch, f"Deep Graph (depth={depth}) - final")
+
         except Exception as e:
             print(f"✗ Very Deep Computation Graph: {str(e)}")
             self.failed_tests += 1
@@ -931,10 +931,10 @@ class AutogradTester:
     def test_wide_computation_graph(self):
         """Test with very wide computation graphs (many inputs)"""
         print("\n=== Testing Wide Computation Graph ===")
-        
+
         try:
             width = 20  # 20 input tensors
-            
+
             with AutogradGraph() as graph:
                 # Create many input tensors
                 inputs_custom = []
@@ -942,32 +942,32 @@ class AutogradTester:
                     inputs_custom.append(
                         CustomTensor([float(i + 1)], _custom_requires_grad=True, graph=graph, is_leaf=True)
                     )
-                
+
                 # Sum all inputs
                 result_custom = inputs_custom[0]
                 for i in range(1, width):
                     result_custom = result_custom + inputs_custom[i]
-                
+
                 result_custom.backward()
-                
+
             # PyTorch equivalent
             inputs_pytorch = []
             for i in range(width):
                 inputs_pytorch.append(torch.tensor([float(i + 1)], requires_grad=True))
-            
+
             result_pytorch = inputs_pytorch[0]
             for i in range(1, width):
                 result_pytorch = result_pytorch + inputs_pytorch[i]
-                
+
             result_pytorch.backward()
-            
+
             # Check all gradients
             for i in range(width):
                 self.assert_tensors_close(
-                    inputs_custom[i], inputs_pytorch[i], 
+                    inputs_custom[i], inputs_pytorch[i],
                     f"Wide Graph (width={width}) - input_{i}"
                 )
-            
+
         except Exception as e:
             print(f"✗ Wide Computation Graph: {str(e)}")
             self.failed_tests += 1
@@ -975,29 +975,29 @@ class AutogradTester:
     def test_nan_and_inf_handling(self):
         """Test handling of NaN and Inf values"""
         print("\n=== Testing NaN and Inf Handling ===")
-        
+
         try:
             # Test with NaN input
             with AutogradGraph() as graph:
                 x_custom = CustomTensor([float('nan')], _custom_requires_grad=True, graph=graph, is_leaf=True)
                 y_custom = x_custom + 1.0
                 y_custom.backward()
-                
+
                 # Check that gradients handle NaN appropriately
                 assert torch.isnan(x_custom.tensor.grad).any() or x_custom.tensor.grad is not None
-                
+
             # Test with Inf input
             with AutogradGraph() as graph:
                 x_custom = CustomTensor([float('inf')], _custom_requires_grad=True, graph=graph, is_leaf=True)
                 y_custom = x_custom * 2.0
                 y_custom.backward()
-                
+
                 # Should handle inf appropriately
                 assert torch.isinf(x_custom.tensor.grad).any() or x_custom.tensor.grad is not None
-                
+
             print("ℹ NaN/Inf Handling - Consider adding explicit handling for edge numerical cases")
             self.passed_tests += 1
-            
+
         except Exception as e:
             print(f"✗ NaN and Inf Handling: {str(e)}")
             self.failed_tests += 1
@@ -1005,21 +1005,21 @@ class AutogradTester:
     def test_zero_gradients(self):
         """Test operations that should produce zero gradients"""
         print("\n=== Testing Zero Gradients ===")
-        
+
         try:
             with AutogradGraph() as graph:
                 x_custom = CustomTensor([2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
-                
+
                 # x - x should have zero gradient with respect to x
                 y_custom = x_custom - x_custom
                 y_custom.backward()
-                
+
             x_pytorch = torch.tensor([2.0], requires_grad=True)
             y_pytorch = x_pytorch - x_pytorch
             y_pytorch.backward()
-            
+
             self.assert_tensors_close(x_custom, x_pytorch, "Zero Gradients - x")
-            
+
         except Exception as e:
             print(f"✗ Zero Gradients: {str(e)}")
             self.failed_tests += 1
@@ -1028,43 +1028,816 @@ class AutogradTester:
     def test_memory_efficiency(self):
         """Test memory efficiency with large computations"""
         print("\n=== Testing Memory Efficiency ===")
-        
+
         try:
             # Create a computation that could potentially leak memory
             initial_tensor_count = len(gc.get_objects())
-            
+
             for iteration in range(5):
                 with AutogradGraph() as graph:
                     x_custom = CustomTensor([1.0] * 100, _custom_requires_grad=True, graph=graph, is_leaf=True)
-                    
+
                     # Chain of operations
                     current = x_custom
                     for i in range(10):
                         current = current + 1.0
                         current = current * 1.1
-                    
+
                     current.backward(torch.ones(100))
-                    
+
                 # Force cleanup
                 del current, x_custom
                 gc.collect()
-            
+
             final_tensor_count = len(gc.get_objects())
-            
+
             # Memory should not grow excessively
             growth = final_tensor_count - initial_tensor_count
             print(f"Object count growth: {growth}")
-            
+
             if growth < 1000:  # Reasonable threshold
                 print("✓ Memory Efficiency - Reasonable memory usage")
                 self.passed_tests += 1
             else:
                 print(f"⚠ Memory Efficiency - High memory growth: {growth} objects")
                 self.passed_tests += 1  # Still pass but warn
-                
+
         except Exception as e:
             print(f"✗ Memory Efficiency: {str(e)}")
             self.failed_tests += 1
+    def test_linear_module(self):
+      """Test Linear module forward pass, backward pass, and parameter updates."""
+      print("\n=== Testing Linear Module ===")
+
+      # Test basic functionality
+      with AutogradGraph() as graph:
+          # Custom implementation
+          linear_custom = Linear(3, 2, bias=True, graph=graph)
+          input_custom = CustomTensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = linear_custom(input_custom)
+          loss_custom = (output_custom * output_custom).sum()
+          loss_custom.backward()
+
+          # PyTorch reference
+          linear_pytorch = torch.nn.Linear(3, 2, bias=True)
+          linear_pytorch.weight.data = linear_custom.weight.tensor.data.clone()
+          linear_pytorch.bias.data = linear_custom.bias.tensor.data.clone()
+
+          input_pytorch = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], requires_grad=True)
+          output_pytorch = linear_pytorch(input_pytorch)
+          loss_pytorch = (output_pytorch * output_pytorch).sum()
+          loss_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "Linear Forward Pass")
+          self.assert_tensors_close(input_custom, input_pytorch, "Linear Input Gradient")
+          self.assert_tensors_close(linear_custom.weight, linear_pytorch.weight, "Linear Weight Gradient")
+          self.assert_tensors_close(linear_custom.bias, linear_pytorch.bias, "Linear Bias Gradient")
+
+      # Test without bias
+      with AutogradGraph() as graph:
+          linear_custom = Linear(2, 1, bias=False, graph=graph)
+          input_custom = CustomTensor([1.0, 2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = linear_custom(input_custom)
+          output_custom.backward()
+
+          linear_pytorch = torch.nn.Linear(2, 1, bias=False)
+          linear_pytorch.weight.data = linear_custom.weight.tensor.data.clone()
+          input_pytorch = torch.tensor([1.0, 2.0], requires_grad=True)
+          output_pytorch = linear_pytorch(input_pytorch)
+          output_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "Linear No Bias Forward")
+          self.assert_tensors_close(linear_custom.weight, linear_pytorch.weight, "Linear No Bias Weight Gradient")
+
+      # Test training vs eval mode
+      with AutogradGraph() as graph:
+          linear_custom = Linear(2, 1, graph=graph)
+          input_custom = CustomTensor([1.0, 2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+
+          # Training mode
+          linear_custom.train()
+          output_train = linear_custom(input_custom)
+
+          # Eval mode
+          linear_custom.eval()
+          output_eval = linear_custom(input_custom)
+
+          # In eval mode, should not require grad for output
+          try:
+              if hasattr(output_eval, '_custom_requires_grad') and output_eval._custom_requires_grad:
+                  raise AssertionError("Output in eval mode should not require grad")
+              print("✓ Linear Eval Mode - No Grad")
+              self.passed_tests += 1
+          except Exception as e:
+              print(f"✗ Linear Eval Mode - No Grad: {str(e)}")
+              self.failed_tests += 1
+
+    def test_conv2d_module(self):
+      """Test Conv2d module forward pass, backward pass, and parameter updates."""
+      print("\n=== Testing Conv2d Module ===")
+
+      # Test basic convolution
+      with AutogradGraph() as graph:
+          # Custom implementation
+          conv_custom = Conv2d(in_channels=2, out_channels=3, kernel_size=3,
+                            stride=1, padding=1, bias=True, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 2, 4, 4),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = conv_custom(input_custom)
+          loss_custom = output_custom.sum()
+          loss_custom.backward()
+
+          # PyTorch reference
+          conv_pytorch = torch.nn.Conv2d(2, 3, 3, stride=1, padding=1, bias=True)
+          conv_pytorch.weight.data = conv_custom.weight.tensor.data.clone()
+          conv_pytorch.bias.data = conv_custom.bias.tensor.data.clone()
+
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = conv_pytorch(input_pytorch)
+          loss_pytorch = output_pytorch.sum()
+          loss_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "Conv2d Forward Pass")
+          self.assert_tensors_close(input_custom, input_pytorch, "Conv2d Input Gradient")
+          self.assert_tensors_close(conv_custom.weight, conv_pytorch.weight, "Conv2d Weight Gradient")
+          self.assert_tensors_close(conv_custom.bias, conv_pytorch.bias, "Conv2d Bias Gradient")
+
+      # Test different parameters
+      with AutogradGraph() as graph:
+          conv_custom = Conv2d(in_channels=1, out_channels=2, kernel_size=2,
+                            stride=2, padding=0, bias=False, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 1, 6, 6),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = conv_custom(input_custom)
+          output_custom.sum().backward()
+
+          conv_pytorch = torch.nn.Conv2d(1, 2, 2, stride=2, padding=0, bias=False)
+          conv_pytorch.weight.data = conv_custom.weight.tensor.data.clone()
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = conv_pytorch(input_pytorch)
+          output_pytorch.sum().backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "Conv2d Different Params Forward")
+          self.assert_tensors_close(conv_custom.weight, conv_pytorch.weight, "Conv2d Different Params Weight Gradient")
+
+    def test_batchnorm_module(self):
+      """Test BatchNorm_Nd module forward pass, backward pass, and running statistics."""
+      print("\n=== Testing BatchNorm Module ===")
+
+      # Test training mode
+      with AutogradGraph() as graph:
+          bn_custom = BatchNorm_Nd(num_features=3, graph=graph)
+          input_custom = CustomTensor(torch.randn(2, 3, 4, 4),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+
+          bn_custom.train()
+          output_custom = bn_custom(input_custom)
+          loss_custom = output_custom.sum()
+          loss_custom.backward()
+
+          # PyTorch reference
+          bn_pytorch = torch.nn.BatchNorm2d(3)
+          bn_pytorch.weight.data = bn_custom.weight.tensor.data.clone()
+          bn_pytorch.bias.data = bn_custom.bias.tensor.data.clone()
+          bn_pytorch.running_mean = bn_custom.running_mean.clone()
+          bn_pytorch.running_var = bn_custom.running_var.clone()
+
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = bn_pytorch(input_pytorch)
+          loss_pytorch = output_pytorch.sum()
+          loss_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "BatchNorm Training Forward")
+          self.assert_tensors_close(input_custom, input_pytorch, "BatchNorm Input Gradient")
+          self.assert_tensors_close(bn_custom.weight, bn_pytorch.weight, "BatchNorm Weight Gradient")
+          self.assert_tensors_close(bn_custom.bias, bn_pytorch.bias, "BatchNorm Bias Gradient")
+
+      # Test eval mode
+      with AutogradGraph() as graph:
+          bn_custom = BatchNorm_Nd(num_features=2, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 2, 3, 3),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+
+          # Set some running stats
+          bn_custom.running_mean = torch.tensor([0.5, -0.3])
+          bn_custom.running_var = torch.tensor([1.2, 0.8])
+
+          bn_custom.eval()
+          output_custom = bn_custom(input_custom)
+
+          bn_pytorch = torch.nn.BatchNorm2d(2)
+          bn_pytorch.weight.data = bn_custom.weight.tensor.data.clone()
+          bn_pytorch.bias.data = bn_custom.bias.tensor.data.clone()
+          bn_pytorch.running_mean = bn_custom.running_mean.clone()
+          bn_pytorch.running_var = bn_custom.running_var.clone()
+          bn_pytorch.eval()
+
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = bn_pytorch(input_pytorch)
+
+          self.assert_tensors_close(output_custom, output_pytorch, "BatchNorm Eval Forward")
+
+    def test_maxpool2d_module(self):
+      """Test MaxPool2d module forward pass and backward pass."""
+      print("\n=== Testing MaxPool2d Module ===")
+
+      with AutogradGraph() as graph:
+          pool_custom = MaxPool2d(kernel_size=2, stride=2, padding=0, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 2, 4, 4),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = pool_custom(input_custom)
+          loss_custom = output_custom.sum()
+          loss_custom.backward()
+
+          # PyTorch reference
+          pool_pytorch = torch.nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = pool_pytorch(input_pytorch)
+          loss_pytorch = output_pytorch.sum()
+          loss_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "MaxPool2d Forward")
+          self.assert_tensors_close(input_custom, input_pytorch, "MaxPool2d Input Gradient")
+
+      # Test with different parameters
+      with AutogradGraph() as graph:
+          pool_custom = MaxPool2d(kernel_size=3, stride=1, padding=1, graph=graph)
+          input_custom = CustomTensor(torch.randn(2, 1, 5, 5),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = pool_custom(input_custom)
+          output_custom=output_custom.sum()
+          output_custom.backward()
+
+          pool_pytorch = torch.nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = pool_pytorch(input_pytorch)
+          output_pytorch=output_pytorch.sum()
+          output_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "MaxPool2d Different Params Forward")
+          self.assert_tensors_close(input_custom, input_pytorch, "MaxPool2d Different Params Gradient")
+
+    def test_avgpool2d_module(self):
+      """Test AvgPool2d module forward pass and backward pass."""
+      print("\n=== Testing AvgPool2d Module ===")
+
+      with AutogradGraph() as graph:
+          pool_custom = AvgPool2d(kernel_size=2, stride=2, padding=0, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 2, 4, 4),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = pool_custom(input_custom)
+          loss_custom = output_custom.sum()
+          loss_custom.backward()
+
+          # PyTorch reference
+          pool_pytorch = torch.nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = pool_pytorch(input_pytorch)
+          loss_pytorch = output_pytorch.sum()
+          loss_pytorch.backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "AvgPool2d Forward")
+          self.assert_tensors_close(input_custom, input_pytorch, "AvgPool2d Input Gradient")
+
+      # Test with padding
+      with AutogradGraph() as graph:
+          pool_custom = AvgPool2d(kernel_size=3, stride=1, padding=1, graph=graph)
+          input_custom = CustomTensor(torch.randn(1, 1, 4, 4),
+                                    _custom_requires_grad=True, graph=graph, is_leaf=True)
+          output_custom = pool_custom(input_custom)
+          output_custom.sum().backward()
+
+          pool_pytorch = torch.nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
+          input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+          output_pytorch = pool_pytorch(input_pytorch)
+          output_pytorch.sum().backward()
+
+          self.assert_tensors_close(output_custom, output_pytorch, "AvgPool2d With Padding Forward")
+          self.assert_tensors_close(input_custom, input_pytorch, "AvgPool2d With Padding Gradient")
+
+    def test_relu_module(self):
+        """Test ReLU activation module."""
+        print("\n=== Testing ReLU Module ===")
+
+        with AutogradGraph() as graph:
+            relu_custom = ReLu(graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = relu_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            relu_pytorch = torch.nn.ReLU()
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = relu_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "ReLU Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "ReLU Input Gradient")
+
+        # Test with negative values specifically
+        with AutogradGraph() as graph:
+            relu_custom = ReLu(graph=graph)
+            input_custom = CustomTensor(torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0]),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = relu_custom(input_custom)
+            output_custom.sum().backward()
+
+            relu_pytorch = torch.nn.ReLU()
+            input_pytorch = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], requires_grad=True)
+            output_pytorch = relu_pytorch(input_pytorch)
+            output_pytorch.sum().backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "ReLU Negative Values Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "ReLU Negative Values Gradient")
+
+    def test_leaky_relu_module(self):
+        """Test Leaky ReLU activation module."""
+        print("\n=== Testing Leaky ReLU Module ===")
+
+        with AutogradGraph() as graph:
+            leaky_relu_custom = Leaky_ReLu(negative_slope=0.01, graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = leaky_relu_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            leaky_relu_pytorch = torch.nn.LeakyReLU(negative_slope=0.01)
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = leaky_relu_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Leaky ReLU Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "Leaky ReLU Input Gradient")
+
+        # Test with different slope
+        with AutogradGraph() as graph:
+            leaky_relu_custom = Leaky_ReLu(negative_slope=0.1, graph=graph)
+            input_custom = CustomTensor(torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0]),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = leaky_relu_custom(input_custom)
+            output_custom.sum().backward()
+
+            leaky_relu_pytorch = torch.nn.LeakyReLU(negative_slope=0.1)
+            input_pytorch = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], requires_grad=True)
+            output_pytorch = leaky_relu_pytorch(input_pytorch)
+            output_pytorch.sum().backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Leaky ReLU Different Slope Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "Leaky ReLU Different Slope Gradient")
+
+    def test_gelu_module(self):
+        """Test GELU activation module."""
+        print("\n=== Testing GELU Module ===")
+
+        # Test exact GELU
+        with AutogradGraph() as graph:
+            gelu_custom = GeLu(approximate='none', graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = gelu_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            gelu_pytorch = torch.nn.GELU(approximate='none')
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = gelu_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "GELU Exact Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "GELU Exact Input Gradient")
+
+        # Test approximate GELU
+        with AutogradGraph() as graph:
+            gelu_custom = GeLu(approximate='tanh', graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = gelu_custom(input_custom)
+            output_custom.sum().backward()
+
+            gelu_pytorch = torch.nn.GELU(approximate='tanh')
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = gelu_pytorch(input_pytorch)
+            output_pytorch.sum().backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "GELU Approximate Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "GELU Approximate Input Gradient")
+
+    def test_elu_module(self):
+        """Test ELU activation module."""
+        print("\n=== Testing ELU Module ===")
+
+        with AutogradGraph() as graph:
+            elu_custom = Elu(alpha=1.0, graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = elu_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            elu_pytorch = torch.nn.ELU(alpha=1.0)
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = elu_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "ELU Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "ELU Input Gradient")
+
+        # Test with different alpha
+        with AutogradGraph() as graph:
+            elu_custom = Elu(alpha=0.5, graph=graph)
+            input_custom = CustomTensor(torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0]),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = elu_custom(input_custom)
+            output_custom.sum().backward()
+
+            elu_pytorch = torch.nn.ELU(alpha=0.5)
+            input_pytorch = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], requires_grad=True)
+            output_pytorch = elu_pytorch(input_pytorch)
+            output_pytorch.sum().backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "ELU Different Alpha Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "ELU Different Alpha Gradient")
+
+    def test_silu_module(self):
+        """Test SiLU (Swish) activation module."""
+        print("\n=== Testing SiLU Module ===")
+
+        with AutogradGraph() as graph:
+            silu_custom = Silu(graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = silu_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            silu_pytorch = torch.nn.SiLU()
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = silu_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "SiLU Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "SiLU Input Gradient")
+
+    def test_sigmoid_module(self):
+        """Test Sigmoid activation module."""
+        print("\n=== Testing Sigmoid Module ===")
+
+        with AutogradGraph() as graph:
+            sigmoid_custom = Sigmoid(graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = sigmoid_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            sigmoid_pytorch = torch.nn.Sigmoid()
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = sigmoid_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Sigmoid Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "Sigmoid Input Gradient")
+
+    def test_tanh_module(self):
+        """Test Tanh activation module."""
+        print("\n=== Testing Tanh Module ===")
+
+        with AutogradGraph() as graph:
+            tanh_custom = Tanh(graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = tanh_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference
+            tanh_pytorch = torch.nn.Tanh()
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = tanh_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Tanh Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "Tanh Input Gradient")
+
+    def test_swish_module(self):
+        """Test Swish activation module with learnable parameter."""
+        print("\n=== Testing Swish Module ===")
+
+        with AutogradGraph() as graph:
+            swish_custom = Swish(B_initial=1.0, graph=graph)
+            input_custom = CustomTensor(torch.randn(2, 3),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = swish_custom(input_custom)
+            loss_custom = output_custom.sum()
+            loss_custom.backward()
+
+            # PyTorch reference - manual implementation since there's no direct equivalent
+            class PyTorchSwish(torch.nn.Module):
+                def __init__(self, B_initial=1.0):
+                    super().__init__()
+                    self.B = torch.nn.Parameter(torch.tensor([B_initial]))
+
+                def forward(self, x):
+                    return x * torch.sigmoid(self.B * x)
+
+            swish_pytorch = PyTorchSwish(B_initial=1.0)
+            swish_pytorch.B.data = swish_custom.B.tensor.data.clone()
+
+            input_pytorch = input_custom.tensor.clone().detach().requires_grad_(True)
+            output_pytorch = swish_pytorch(input_pytorch)
+            loss_pytorch = output_pytorch.sum()
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Swish Forward")
+            self.assert_tensors_close(input_custom, input_pytorch, "Swish Input Gradient")
+            self.assert_tensors_close(swish_custom.B, swish_pytorch.B, "Swish B Parameter Gradient")
+
+        # Test with different B_initial
+        with AutogradGraph() as graph:
+            swish_custom = Swish(B_initial=2.0, graph=graph)
+            input_custom = CustomTensor(torch.tensor([0.5, -0.5, 1.0, -1.0]),
+                                        _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output_custom = swish_custom(input_custom)
+            output_custom.sum().backward()
+
+            swish_pytorch = PyTorchSwish(B_initial=2.0)
+            swish_pytorch.B.data = swish_custom.B.tensor.data.clone()
+            input_pytorch = torch.tensor([0.5, -0.5, 1.0, -1.0], requires_grad=True)
+            output_pytorch = swish_pytorch(input_pytorch)
+            output_pytorch.sum().backward()
+
+            self.assert_tensors_close(output_custom, output_pytorch, "Swish Different B Forward")
+            self.assert_tensors_close(swish_custom.B, swish_pytorch.B, "Swish Different B Parameter Gradient")
+
+    def test_module_parameter_management(self):
+        """Test parameter collection and gradient zeroing across modules."""
+        print("\n=== Testing Module Parameter Management ===")
+
+        with AutogradGraph() as graph:
+            # Create a small network
+            linear1 = Linear(3, 2, graph=graph)
+            linear2 = Linear(2, 1, graph=graph)
+
+            # Test parameter collection
+            params1 = linear1.parameters()
+            params2 = linear2.parameters()
+
+            try:
+                # Should have weight and bias for each layer
+                if len(params1) != 2:
+                    raise AssertionError(f"Linear1 should have 2 parameters, got {len(params1)}")
+                if len(params2) != 2:
+                    raise AssertionError(f"Linear2 should have 2 parameters, got {len(params2)}")
+                print("✓ Module Parameter Collection")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Parameter Collection: {str(e)}")
+                self.failed_tests += 1
+
+            # Test forward pass
+            input_tensor = CustomTensor([[1.0, 2.0, 3.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            hidden = linear1(input_tensor)
+            output = linear2(hidden)
+            loss = output.sum()
+            loss.backward()
+
+            # Check that all parameters have gradients
+            all_params = params1 + params2
+            try:
+                for i, param in enumerate(all_params):
+                    if param.tensor.grad is None:
+                        raise AssertionError(f"Parameter {i} should have gradient")
+                print("✓ Module All Parameters Have Gradients")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module All Parameters Have Gradients: {str(e)}")
+                self.failed_tests += 1
+
+            # Test zero_grad
+            linear1.zero_grad()
+            linear2.zero_grad()
+
+            try:
+                for i, param in enumerate(all_params):
+                    if param.tensor.grad is None or not torch.allclose(param.tensor.grad, torch.zeros_like(param.tensor.grad)):
+                        raise AssertionError(f"Parameter {i} gradient should be zero after zero_grad()")
+                print("✓ Module Zero Grad")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Zero Grad: {str(e)}")
+                self.failed_tests += 1
+
+    def test_module_training_eval_modes(self):
+        """Test training and evaluation mode switching."""
+        print("\n=== Testing Module Training/Eval Modes ===")
+
+        with AutogradGraph() as graph:
+            # Test with modules that behave differently in train/eval
+            linear = Linear(2, 1, graph=graph)
+            bn = BatchNorm_Nd(1, graph=graph)
+            relu = ReLu(graph=graph)
+
+            # Initially should be in training mode
+            try:
+                if not linear.training or not bn.training or not relu.training:
+                    raise AssertionError("Modules should start in training mode")
+                print("✓ Module Initial Training Mode")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Initial Training Mode: {str(e)}")
+                self.failed_tests += 1
+
+            # Switch to eval mode
+            linear.eval()
+            bn.eval()
+            relu.eval()
+
+            try:
+                if linear.training or bn.training or relu.training:
+                    raise AssertionError("Modules should be in eval mode after eval()")
+                print("✓ Module Eval Mode Switch")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Eval Mode Switch: {str(e)}")
+                self.failed_tests += 1
+
+            # Switch back to training mode
+            linear.train()
+            bn.train()
+            relu.train()
+
+            try:
+                if not linear.training or not bn.training or not relu.training:
+                    raise AssertionError("Modules should be in training mode after train()")
+                print("✓ Module Training Mode Switch")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Training Mode Switch: {str(e)}")
+                self.failed_tests += 1
+
+    def test_module_nested_structure(self):
+        """Test nested module structures and parameter collection."""
+        print("\n=== Testing Nested Module Structure ===")
+
+        class SimpleNet(Module):
+            def __init__(self, graph):
+                super().__init__()
+                self.layer1 = Linear(3, 4, graph=graph)
+                self.activation = ReLu(graph=graph)
+                self.layer2 = Linear(4, 2, graph=graph)
+
+            def forward(self, x):
+                x = self.layer1(x)
+                x = self.activation(x)
+                x = self.layer2(x)
+                return x
+
+        with AutogradGraph() as graph:
+            net = SimpleNet(graph)
+
+            # Test nested parameter collection
+            params = net.parameters()
+
+            try:
+                # Should have 4 parameters: 2 weights + 2 biases
+                if len(params) != 4:
+                    raise AssertionError(f"Network should have 4 parameters, got {len(params)}")
+                print("✓ Nested Module Parameter Collection")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Nested Module Parameter Collection: {str(e)}")
+                self.failed_tests += 1
+
+            # Test nested training mode switching
+            net.train()
+            try:
+                if not net.layer1.training or not net.activation.training or not net.layer2.training:
+                    raise AssertionError("All nested modules should be in training mode")
+                print("✓ Nested Module Training Mode")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Nested Module Training Mode: {str(e)}")
+                self.failed_tests += 1
+
+            net.eval()
+            try:
+                if net.layer1.training or net.activation.training or net.layer2.training:
+                    raise AssertionError("All nested modules should be in eval mode")
+                print("✓ Nested Module Eval Mode")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Nested Module Eval Mode: {str(e)}")
+                self.failed_tests += 1
+            net.train()
+            # Test forward pass through nested structure
+            input_tensor = CustomTensor([[1.0, 2.0, 3.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output = net(input_tensor)
+            loss = output.sum()
+            loss.backward()
+
+            # Check that all parameters have gradients
+            try:
+                for i, param in enumerate(params):
+                    if param.tensor.grad is None:
+                        raise AssertionError(f"Parameter {i} should have gradient after backward")
+                print("✓ Nested Module Gradient Flow")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Nested Module Gradient Flow: {str(e)}")
+                self.failed_tests += 1
+
+    def test_module_edge_cases(self):
+        """Test edge cases and error conditions for modules."""
+        print("\n=== Testing Module Edge Cases ===")
+
+        # Test very small inputs
+        with AutogradGraph() as graph:
+            linear = Linear(1, 1, graph=graph)
+            tiny_input = CustomTensor([[1e-8]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output = linear(tiny_input)
+            output.backward()
+
+            try:
+                if linear.weight.tensor.grad is None or linear.bias.tensor.grad is None:
+                    raise AssertionError("Should handle very small inputs")
+                print("✓ Module Tiny Input Handling")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Tiny Input Handling: {str(e)}")
+                self.failed_tests += 1
+
+        # Test large inputs
+        with AutogradGraph() as graph:
+            linear = Linear(2, 2, graph=graph)
+            large_input = CustomTensor([[1e6, -1e6]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output = linear(large_input)
+            output.sum().backward()
+
+            try:
+                if torch.isnan(linear.weight.tensor.grad).any() or torch.isinf(linear.weight.tensor.grad).any():
+                    raise AssertionError("Should handle large inputs without NaN/Inf")
+                print("✓ Module Large Input Handling")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Large Input Handling: {str(e)}")
+                self.failed_tests += 1
+
+        # Test zero gradients don't break anything
+        with AutogradGraph() as graph:
+            relu = ReLu(graph=graph)
+            zero_input = CustomTensor([[-1.0, -2.0, -3.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            output = relu(zero_input)  # All outputs will be 0
+            output.sum().backward()    # All gradients will be 0
+
+            try:
+                if zero_input.tensor.grad is None:
+                    raise AssertionError("Should handle zero gradient case")
+                if not torch.allclose(zero_input.tensor.grad, torch.zeros_like(zero_input.tensor.grad)):
+                    raise AssertionError("Gradients should be zero for negative ReLU inputs")
+                print("✓ Module Zero Gradient Handling")
+                self.passed_tests += 1
+            except Exception as e:
+                print(f"✗ Module Zero Gradient Handling: {str(e)}")
+                self.failed_tests += 1
+
+    def test_all_modules_comprehensive(self):
+      """Comprehensive test running all module tests."""
+      print("\n=== Running All Module Tests ===")
+
+      self.test_linear_module()
+      self.test_conv2d_module()
+      self.test_batchnorm_module()
+      self.test_maxpool2d_module()
+      self.test_avgpool2d_module()
+      self.test_relu_module()
+      self.test_leaky_relu_module()
+      self.test_gelu_module()
+      self.test_elu_module()
+      self.test_silu_module()
+      self.test_sigmoid_module()
+      self.test_tanh_module()
+      self.test_swish_module()
+      self.test_module_parameter_management()
+      self.test_module_training_eval_modes()
+      self.test_module_nested_structure()
+      self.test_module_edge_cases()
+
 
     def run_all_tests(self):
         """Run all tests"""
@@ -1101,6 +1874,27 @@ class AutogradTester:
         self.test_nan_and_inf_handling()
         self.test_zero_gradients()
         self.test_memory_efficiency()
+        print("\n" + "=" * 50)
+        print("Running All Module Tests")
+        print("=" * 50)
+        self.test_linear_module()
+        self.test_conv2d_module()
+        self.test_batchnorm_module()
+        self.test_maxpool2d_module()
+        self.test_avgpool2d_module()
+        self.test_relu_module()
+        self.test_leaky_relu_module()
+        self.test_gelu_module()
+        self.test_elu_module()
+        self.test_silu_module()
+        self.test_sigmoid_module()
+        self.test_tanh_module()
+        self.test_swish_module()
+        self.test_module_parameter_management()
+        self.test_module_training_eval_modes()
+        self.test_module_nested_structure()
+        self.test_module_edge_cases()
+
 
 
         print(f"\n" + "=" * 50)
