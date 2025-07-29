@@ -122,7 +122,7 @@ class Linear(Module):
             'bias': weakref.proxy(self.bias) if self.bias is not None else None
         }
 
-        result.backward = self._create_backward(refs)
+        result._backward = self._create_backward(refs)
         return result
     
     def _create_backward(self, refs):
@@ -506,7 +506,7 @@ class BatchNorm_Nd(Module):
         return outer_term * (term_1 + term_2 + term3)
 
 class MaxPool2d(Module):
-    def __new__(cls, *, kernel_size, stride=1, padding=0, dilation=1):
+    def __new__(cls, *, kernel_size, stride=1, padding=0, dilation=1,graph=None):
         assert isinstance(kernel_size, int) or len(kernel_size) == 2
         assert isinstance(stride, int) or len(stride) == 2
         assert isinstance(dilation, int) or len(dilation) == 2
@@ -975,7 +975,7 @@ class Swish(Module):
     def __init__(self, *, B_initial=1.0, graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
-        self.B = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.B = CustomTensor([B_initial], _custom_requires_grad=True, graph=graph, is_leaf=True)
         self.B_initial = B_initial
     
     def _create_backward(self, input_tensor, result, output_tensor):

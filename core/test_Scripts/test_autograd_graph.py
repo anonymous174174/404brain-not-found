@@ -13,7 +13,7 @@ class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
         self.failed_tests = 0
-        self.tolerance = 1e-6  # Increased tolerance slightly for complex ops
+        self.tolerance = 1e-7  # Increased tolerance slightly for complex ops
 
     def assert_tensors_close(self, custom_tensor, pytorch_tensor, test_name, check_grad=True):
         """Compare custom tensor with PyTorch tensor values and optionally gradients."""

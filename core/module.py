@@ -1096,7 +1096,7 @@ class Swish(Module):
     def __init__(self,*,B_initial=1.0,graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
-        self.B = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.B = CustomTensor([B_initial], _custom_requires_grad=True, graph=graph, is_leaf=True)
         self.B_initial = B_initial
     
     def forward(self, input_tensor):

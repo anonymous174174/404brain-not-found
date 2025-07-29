@@ -194,3 +194,6 @@ cython_debug/
 .cursorindexingignore
 .vscode
 .qodo
+temp.py
+1.py
+2.py
