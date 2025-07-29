@@ -4,12 +4,15 @@ import weakref
 import torch.nn.functional as F
 from custom_tensor import CustomTensor
 from collections import OrderedDict
+from .__init__ import device, dtype
 
 class Module:
     """
     Base class for all neural network modules. Your models should also subclass this class.
     Modules can also contain other Modules, allowing to nest them in a tree structure.
     """
+    device=device
+    dtype=dtype
     def __init__(self):
         self._parameters = OrderedDict()
         self._modules = OrderedDict()
@@ -83,7 +86,7 @@ class Linear(Module):
         self.graph = weakref.proxy(graph) if graph is not None else None
 
         # Initialize weight
-        self.weight = CustomTensor(torch.empty(out_features, in_features),
+        self.weight = CustomTensor(torch.empty(out_features, in_features, device=Linear.device, dtype=Linear.dtype),
                                  _custom_requires_grad=True, graph=graph, is_leaf=True)
 
         init_method, init_param = self._ACTIVATION_INIT[activation]
@@ -93,7 +96,7 @@ class Linear(Module):
             torch.nn.init.xavier_uniform_(self.weight.tensor, gain=init_param)
 
         # Initialize bias
-        self.bias = CustomTensor(torch.zeros(out_features),
+        self.bias = CustomTensor(torch.zeros(out_features,device=Linear.device, dtype=Linear.dtype),
                                _custom_requires_grad=True, graph=graph, is_leaf=True) if bias else None
 
     def forward(self, input_tensor):
@@ -203,7 +206,7 @@ class Conv2d(Module):
         self.graph = weakref.proxy(graph) if graph is not None else None
 
         weight_shape = (out_channels, in_channels // groups, *self.kernel_size)
-        self.weight = CustomTensor(torch.empty(weight_shape), _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.weight = CustomTensor(torch.empty(weight_shape,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
 
         # Use lookup table for initialization
         init_method, init_param = self._ACTIVATION_INIT[activation]
@@ -212,7 +215,7 @@ class Conv2d(Module):
         else:  # xavier_uniform_
             torch.nn.init.xavier_uniform_(self.weight.tensor, gain=init_param)
 
-        self.bias = CustomTensor(torch.zeros(out_channels), _custom_requires_grad=True, graph=graph, is_leaf=True) if bias else None
+        self.bias = CustomTensor(torch.zeros(out_channels,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True) if bias else None
 
     def forward(self, input_tensor):
         output_tensor = F.conv2d(
@@ -396,11 +399,11 @@ class BatchNorm_Nd(Module):
         self.momentum = momentum
         self.graph = weakref.proxy(graph)
 
-        self.weight = CustomTensor(torch.ones(num_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
-        self.bias = CustomTensor(torch.zeros(num_features), _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.weight = CustomTensor(torch.ones(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.bias = CustomTensor(torch.zeros(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
 
-        self.running_mean = torch.zeros(num_features)
-        self.running_var = torch.ones(num_features)
+        self.running_mean = torch.zeros(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype)
+        self.running_var = torch.ones(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype)
 
         self._channel_axis = 1
         self._shape_cache = {}
@@ -667,7 +670,7 @@ class AvgPool2d(Module):
             output_padding_w = w_in - ((w_out - 1) * stride[1] - 2 * padding[1] +  (kernel_size[1] - 1) + 1)
             output_padding = (output_padding_h, output_padding_w)
             pool_size = kernel_size[0] * kernel_size[1]
-            grad_kernel = torch.ones(grad_output.shape[1], 1, kernel_size[0], kernel_size[1]) / pool_size
+            grad_kernel = torch.ones(grad_output.shape[1], 1, kernel_size[0], kernel_size[1],device=grad_output.device,dtype=grad_output.dtype) / pool_size
             grad_input = F.conv_transpose2d(
                 input= grad_output,
                 weight = grad_kernel,
@@ -677,7 +680,6 @@ class AvgPool2d(Module):
                 groups = input.shape[1]
             )
             return grad_input
-
 
 class ReLu(Module):
     def __init__(self, *, graph=None):
@@ -952,14 +954,15 @@ class Swish(Module):
                 input_ref._zero_grad()
             if B_ref.tensor.grad is None:
                 B_ref._zero_grad()
-            grad_output = result_ref.tensor.grad
-            sig_B_x = output_tensor / input_ref.tensor
-            common = sig_B_x * (1 - sig_B_x) * grad_output
+            grad_input, grad_B = self._calculate_gradients(input_ref.tensor, result_ref.tensor, output_tensor, B_ref.tensor)
+            # grad_output = result_ref.tensor.grad
+            # sig_B_x = output_tensor / input_ref.tensor
+            # common = sig_B_x * (1 - sig_B_x) * grad_output
 
-            grad_input = sig_B_x * grad_output + input_ref.tensor * B_ref.tensor * common
-            grad_B = input_ref.tensor.square() * common
+            # grad_input = sig_B_x * grad_output + input_ref.tensor * B_ref.tensor * common
+            # grad_B = input_ref.tensor.square() * common
             input_ref.tensor.grad.add_(grad_input)
-            B_ref.tensor.grad.add_(grad_B.sum())
+            B_ref.tensor.grad.add_(grad_B)
 
         return _backward
 
@@ -974,5 +977,14 @@ class Swish(Module):
         self.graph.add_edge(self.B._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
-
+    
+    @torch.compile
+    def _calculate_gradients(self, input_tensor, result, output_tensor, B_tensor):
+        grad_output =result.grad
+        sig_B_x = output_tensor / input_tensor
+        common = sig_B_x * (1 - sig_B_x) * grad_output
+        grad_input = sig_B_x * grad_output + input_tensor * B_tensor * common
+        grad_B = input_tensor.square() * common
+        grad_B = grad_B.sum()
+        return grad_input, grad_B
 
