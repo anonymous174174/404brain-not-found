@@ -457,7 +457,10 @@ class CustomTensor:
             self_ref.tensor.grad.add_(result_ref.tensor.grad*0.5*self_ref.tensor.pow(-0.5))
         result._backward = _backward
         return result
-
+    def __matmul__(self,other):
+        if isinstance(other, CustomTensor):
+            return self.matmul(other)
+        return NotImplemented
     def matmul(self, other):
         result_tensor = torch.matmul(self.tensor, other.tensor)
         requires_grad = self._custom_requires_grad or other._custom_requires_grad

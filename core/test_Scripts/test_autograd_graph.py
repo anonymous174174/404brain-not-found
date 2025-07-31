@@ -10,6 +10,7 @@ import pytest
 from autograd_graph import AutogradGraph
 from custom_tensor import CustomTensor
 from module import *
+from losses import *
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
@@ -1815,28 +1816,399 @@ class AutogradTester:
             except Exception as e:
                 print(f"✗ Module Zero Gradient Handling: {str(e)}")
                 self.failed_tests += 1
+    def test_mse_loss_basic(self):
+        """Test basic MSE loss functionality"""
+        print("\n=== Testing MSE Loss Basic ===")
+
+        # Basic MSE test
+        with AutogradGraph() as graph:
+            # Create input and target tensors
+            input_custom = CustomTensor([[1.0, 2.0], [3.0, 4.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[0.5, 1.5], [2.5, 3.5]], _custom_requires_grad=False)
+
+            mse_loss = MSE(graph=graph)
+            mse_loss.train()  # Ensure training mode
+            loss_custom = mse_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+            target_pytorch = torch.tensor([[0.5, 1.5], [2.5, 3.5]], requires_grad=False)
+            loss_pytorch = torch.nn.functional.mse_loss(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "MSE Loss Basic - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "MSE Loss Basic - loss value", check_grad=False)
+
+    def test_mse_loss_with_weights(self):
+      """Test MSE loss with per-class and per-pixel weights"""
+      print("\n=== Testing MSE Loss with Per-Class Weights ===")
+
+      # -----------------------
+      # PER-CLASS WEIGHT TEST
+      # -----------------------
+      with AutogradGraph() as graph:
+          input_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+          target_tensor = torch.tensor([[0.5, 1.5], [2.5, 3.5]])
+          weight_tensor = torch.tensor([2.0, 0.5])  # Per-class weight (C=2)
+
+          input_custom = CustomTensor(input_tensor.clone(), _custom_requires_grad=True, graph=graph, is_leaf=True)
+          target_custom = CustomTensor(target_tensor.clone(), _custom_requires_grad=False)
+
+          mse_loss = MSE(graph=graph)
+          mse_loss.train()
+          loss_custom = mse_loss(input_custom, target_custom, weight=weight_tensor)
+          loss_custom.backward()
+
+          # Manual PyTorch equivalent
+          input_pytorch = input_tensor.clone().detach().requires_grad_(True)
+          diff = input_pytorch - target_tensor
+          weight = weight_tensor.view(1, -1)  # shape (1, C)
+          weighted_diff = (diff ** 2) * weight
+          loss_expected = weighted_diff.sum() / weight.sum()
+          loss_expected.backward()
+
+          self.assert_tensors_close(input_custom, input_pytorch, "Per-Class Weighted MSE - Input Gradient")
+          self.assert_tensors_close(loss_custom, loss_expected, "Per-Class Weighted MSE - Loss Value", check_grad=False)
+
+      # -----------------------
+      # PER-PIXEL WEIGHT TEST
+      # -----------------------
+      print("\n=== Testing MSE Loss with Per-Pixel Weights ===")
+      with AutogradGraph() as graph:
+          input_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+          target_tensor = torch.tensor([[0.5, 1.5], [2.5, 3.5]])
+          weight_tensor = torch.tensor([[2.0, 2.0], [0.5, 0.5]])  # Per-pixel weights (shape matches input)
+
+          input_custom = CustomTensor(input_tensor.clone(), _custom_requires_grad=True, graph=graph, is_leaf=True)
+          target_custom = CustomTensor(target_tensor.clone(), _custom_requires_grad=False)
+
+          mse_loss = MSE(graph=graph)
+          mse_loss.train()
+          loss_custom = mse_loss(input_custom, target_custom, weight=weight_tensor)
+          loss_custom.backward()
+
+          # Manual PyTorch equivalent
+          input_pytorch = input_tensor.clone().detach().requires_grad_(True)
+          diff = input_pytorch - target_tensor
+          weighted_diff = (diff ** 2) * weight_tensor
+          loss_expected = weighted_diff.sum() / weight_tensor.sum()
+          loss_expected.backward()
+
+          self.assert_tensors_close(input_custom, input_pytorch, "Per-Pixel Weighted MSE - Input Gradient")
+          self.assert_tensors_close(loss_custom, loss_expected, "Per-Pixel Weighted MSE - Loss Value", check_grad=False)
+
+
+    def test_mse_loss_eval_mode(self):
+        """Test MSE loss in evaluation mode (no gradients)"""
+        print("\n=== Testing MSE Loss Eval Mode ===")
+
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[1.0, 2.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[0.5, 1.5]], _custom_requires_grad=False)
+
+            mse_loss = MSE(graph=graph)
+            mse_loss.eval()  # Set to evaluation mode
+            loss_custom = mse_loss(input_custom, target_custom)
+
+            # In eval mode, should not require grad
+            if loss_custom._custom_requires_grad:
+                print("✗ MSE Loss Eval Mode: Loss should not require grad in eval mode")
+                self.failed_tests += 1
+            else:
+                print("✓ MSE Loss Eval Mode: Loss correctly doesn't require grad")
+                self.passed_tests += 1
+
+    def test_cross_entropy_loss_basic(self):
+        """Test basic CrossEntropy loss functionality"""
+        print("\n=== Testing CrossEntropy Loss Basic ===")
+
+        with AutogradGraph() as graph:
+            # Logits for 3 classes, 2 samples
+            input_custom = CustomTensor([[2.0, 1.0, 0.5], [0.5, 2.0, 1.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([0, 1], dtype=torch.long, _custom_requires_grad=False)  # Class indices
+
+            ce_loss = CrossEntropyLoss(graph=graph)
+            ce_loss.train()
+            loss_custom = ce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[2.0, 1.0, 0.5], [0.5, 2.0, 1.0]], requires_grad=True)
+            target_pytorch = torch.tensor([0, 1], dtype=torch.long)
+            loss_pytorch = torch.nn.functional.cross_entropy(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "CrossEntropy Loss Basic - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "CrossEntropy Loss Basic - loss value", check_grad=False)
+
+    def test_cross_entropy_loss_with_weights(self):
+        """Test CrossEntropy loss with class weights"""
+        print("\n=== Testing CrossEntropy Loss with Weights ===")
+
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[2.0, 1.0, 0.5], [0.5, 2.0, 1.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([0, 2], dtype=torch.long, _custom_requires_grad=False)
+            weight_custom = torch.tensor([1.0, 0.5, 2.0])  # Weights for each class
+
+            ce_loss = CrossEntropyLoss(graph=graph)
+            ce_loss.train()
+            loss_custom = ce_loss(input_custom, target_custom, weight=weight_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[2.0, 1.0, 0.5], [0.5, 2.0, 1.0]], requires_grad=True)
+            target_pytorch = torch.tensor([0, 2], dtype=torch.long)
+            weight_pytorch = torch.tensor([1.0, 0.5, 2.0])
+            loss_pytorch = torch.nn.functional.cross_entropy(input_pytorch, target_pytorch, weight=weight_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "CrossEntropy Loss with Weights - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "CrossEntropy Loss with Weights - loss value", check_grad=False)
+
+    def test_cross_entropy_loss_single_class(self):
+        """Test CrossEntropy loss with single sample"""
+        print("\n=== Testing CrossEntropy Loss Single Class ===")
+
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[1.0, 2.0, 0.5]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([1], dtype=torch.long, _custom_requires_grad=False)
+
+            ce_loss = CrossEntropyLoss(graph=graph)
+            ce_loss.train()
+            loss_custom = ce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[1.0, 2.0, 0.5]], requires_grad=True)
+            target_pytorch = torch.tensor([1], dtype=torch.long)
+            loss_pytorch = torch.nn.functional.cross_entropy(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "CrossEntropy Loss Single Class - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "CrossEntropy Loss Single Class - loss value", check_grad=False)
+
+    def test_bce_with_logits_loss_basic(self):
+        """Test basic BCEWithLogits loss functionality"""
+        print("\n=== Testing BCEWithLogits Loss Basic ===")
+
+        with AutogradGraph() as graph:
+            # Binary classification logits
+            input_custom = CustomTensor([[0.5, -1.0], [1.5, 0.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[1.0, 0.0], [1.0, 0.0]], _custom_requires_grad=False)
+
+            bce_loss = BCEWithLogitsLoss(graph=graph)
+            bce_loss.train()
+            loss_custom = bce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[0.5, -1.0], [1.5, 0.0]], requires_grad=True)
+            target_pytorch = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+            loss_pytorch = torch.nn.functional.binary_cross_entropy_with_logits(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "BCEWithLogits Loss Basic - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "BCEWithLogits Loss Basic - loss value", check_grad=False)
+
+    def test_bce_with_logits_loss_pos_weight(self):
+        """Test BCEWithLogits loss with positive class weights"""
+        print("\n=== Testing BCEWithLogits Loss with Pos Weight ===")
+
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[0.5, -1.0], [1.5, 0.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[1.0, 0.0], [1.0, 0.0]], _custom_requires_grad=False)
+            pos_weight_custom = torch.tensor([[2.0, 1.0], [1.5, 1.0]])  # Higher weight for positive class
+
+            bce_loss = BCEWithLogitsLoss(graph=graph)
+            bce_loss.train()
+            loss_custom = bce_loss(input_custom, target_custom, weight=pos_weight_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[0.5, -1.0], [1.5, 0.0]], requires_grad=True)
+            target_pytorch = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+            pos_weight_pytorch = torch.tensor([[2.0, 1.0], [1.5, 1.0]])
+            loss_pytorch = torch.nn.functional.binary_cross_entropy_with_logits(input_pytorch, target_pytorch, pos_weight=pos_weight_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "BCEWithLogits Loss with Pos Weight - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "BCEWithLogits Loss with Pos Weight - loss value", check_grad=False)
+
+    def test_bce_with_logits_loss_single_output(self):
+        """Test BCEWithLogits loss with single output"""
+        print("\n=== Testing BCEWithLogits Loss Single Output ===")
+
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([0.8], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([1.0], _custom_requires_grad=False)
+
+            bce_loss = BCEWithLogitsLoss(graph=graph)
+            bce_loss.train()
+            loss_custom = bce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([0.8], requires_grad=True)
+            target_pytorch = torch.tensor([1.0])
+            loss_pytorch = torch.nn.functional.binary_cross_entropy_with_logits(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "BCEWithLogits Loss Single Output - input gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "BCEWithLogits Loss Single Output - loss value", check_grad=False)
+
+    def test_loss_functions_chain(self):
+        """Test loss functions in a computation chain"""
+        print("\n=== Testing Loss Functions in Chain ===")
+
+        with AutogradGraph() as graph:
+            # Create a simple network: input -> linear transformation -> loss
+            input_custom = CustomTensor([[1.0, 2.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            weight_custom = CustomTensor([[0.5], [1.5]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+
+            # Linear transformation: input @ weight
+            logits_custom = input_custom @ weight_custom
+            target_custom = CustomTensor([[1.0]], _custom_requires_grad=False)
+
+            # Apply BCE loss
+            bce_loss = BCEWithLogitsLoss(graph=graph)
+            bce_loss.train()
+            loss_custom = bce_loss(logits_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[1.0, 2.0]], requires_grad=True)
+            weight_pytorch = torch.tensor([[0.5], [1.5]], requires_grad=True)
+            logits_pytorch = input_pytorch @ weight_pytorch
+            target_pytorch = torch.tensor([[1.0]])
+            loss_pytorch = torch.nn.functional.binary_cross_entropy_with_logits(logits_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "Loss Functions Chain - input gradients")
+            self.assert_tensors_close(weight_custom, weight_pytorch, "Loss Functions Chain - weight gradients")
+            self.assert_tensors_close(loss_custom, loss_pytorch, "Loss Functions Chain - loss value", check_grad=False)
+
+    def test_loss_functions_edge_cases(self):
+        """Test loss functions with edge cases"""
+        print("\n=== Testing Loss Functions Edge Cases ===")
+
+        # Test with very small values
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[1e-6, 1e-7]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[1e-6, 1e-7]], _custom_requires_grad=False)
+
+            mse_loss = MSE(graph=graph)
+            mse_loss.train()
+            loss_custom = mse_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[1e-6, 1e-7]], requires_grad=True)
+            target_pytorch = torch.tensor([[1e-6, 1e-7]])
+            loss_pytorch = torch.nn.functional.mse_loss(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "Loss Functions Edge Cases - small values")
+
+        # Test with large values for CrossEntropy
+        with AutogradGraph() as graph:
+            input_custom = CustomTensor([[10.0, 5.0, 1.0]], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([0], dtype=torch.long, _custom_requires_grad=False)
+
+            ce_loss = CrossEntropyLoss(graph=graph)
+            ce_loss.train()
+            loss_custom = ce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[10.0, 5.0, 1.0]], requires_grad=True)
+            target_pytorch = torch.tensor([0], dtype=torch.long)
+            loss_pytorch = torch.nn.functional.cross_entropy(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, "Loss Functions Edge Cases - large values")
+
+    def test_loss_functions_batch_sizes(self):
+        """Test loss functions with different batch sizes"""
+        print("\n=== Testing Loss Functions Different Batch Sizes ===")
+
+        # Test with larger batch
+        with AutogradGraph() as graph:
+            batch_size = 5
+            input_custom = CustomTensor([[i + 0.5, i + 1.0] for i in range(batch_size)], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([[i, i + 0.5] for i in range(batch_size)], _custom_requires_grad=False)
+
+            mse_loss = MSE(graph=graph)
+            mse_loss.train()
+            loss_custom = mse_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[i + 0.5, i + 1.0] for i in range(batch_size)], requires_grad=True)
+            target_pytorch = torch.tensor([[i, i + 0.5] for i in range(batch_size)])
+            loss_pytorch = torch.nn.functional.mse_loss(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, f"Loss Functions Batch Size {batch_size} - MSE")
+
+        # Test CrossEntropy with larger batch
+        with AutogradGraph() as graph:
+            batch_size = 4
+            num_classes = 3
+            input_custom = CustomTensor([[i * 0.5, (i + 1) * 0.3, (i + 2) * 0.2] for i in range(batch_size)], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            target_custom = CustomTensor([i % num_classes for i in range(batch_size)], dtype=torch.long, _custom_requires_grad=False)
+
+            ce_loss = CrossEntropyLoss(graph=graph)
+            ce_loss.train()
+            loss_custom = ce_loss(input_custom, target_custom)
+            loss_custom.backward()
+
+            # PyTorch comparison
+            input_pytorch = torch.tensor([[i * 0.5, (i + 1) * 0.3, (i + 2) * 0.2] for i in range(batch_size)], requires_grad=True)
+            target_pytorch = torch.tensor([i % num_classes for i in range(batch_size)], dtype=torch.long)
+            loss_pytorch = torch.nn.functional.cross_entropy(input_pytorch, target_pytorch, reduction='mean')
+            loss_pytorch.backward()
+
+            self.assert_tensors_close(input_custom, input_pytorch, f"Loss Functions Batch Size {batch_size} - CrossEntropy")
 
     def test_all_modules_comprehensive(self):
-      """Comprehensive test running all module tests."""
-      print("\n=== Running All Module Tests ===")
+        """Comprehensive test running all module tests."""
+        print("\n=== Running All Module Tests ===")
 
-      self.test_linear_module()
-      self.test_conv2d_module()
-      self.test_batchnorm_module()
-      self.test_maxpool2d_module()
-      self.test_avgpool2d_module()
-      self.test_relu_module()
-      self.test_leaky_relu_module()
-      self.test_gelu_module()
-      self.test_elu_module()
-      self.test_silu_module()
-      self.test_sigmoid_module()
-      self.test_tanh_module()
-      self.test_swish_module()
-      self.test_module_parameter_management()
-      self.test_module_training_eval_modes()
-      self.test_module_nested_structure()
-      self.test_module_edge_cases()
+        self.test_linear_module()
+        self.test_conv2d_module()
+        self.test_batchnorm_module()
+        self.test_maxpool2d_module()
+        self.test_avgpool2d_module()
+        self.test_relu_module()
+        self.test_leaky_relu_module()
+        self.test_gelu_module()
+        self.test_elu_module()
+        self.test_silu_module()
+        self.test_sigmoid_module()
+        self.test_tanh_module()
+        self.test_swish_module()
+        self.test_module_parameter_management()
+        self.test_module_training_eval_modes()
+        self.test_module_nested_structure()
+        self.test_module_edge_cases()
+
+    def test_all_losses_comprehensive(self):
+        print("\n" + "=" * 50)
+        print("Running All Losses Tests")
+        print("=" * 50)
+        self.test_mse_loss_basic()
+        self.test_mse_loss_with_weights()
+        self.test_mse_loss_eval_mode()
+        self.test_cross_entropy_loss_basic()
+        self.test_cross_entropy_loss_with_weights()
+        self.test_cross_entropy_loss_single_class()
+        self.test_bce_with_logits_loss_basic()
+        self.test_bce_with_logits_loss_pos_weight()
+        self.test_bce_with_logits_loss_single_output()
+        self.test_loss_functions_chain()
+        self.test_loss_functions_edge_cases()
+        self.test_loss_functions_batch_sizes()
 
 
     def run_all_tests(self):
@@ -1894,6 +2266,21 @@ class AutogradTester:
         self.test_module_training_eval_modes()
         self.test_module_nested_structure()
         self.test_module_edge_cases()
+        print("\n" + "=" * 50)
+        print("Running All Losses Tests")
+        print("=" * 50)
+        self.test_mse_loss_basic()
+        self.test_mse_loss_with_weights()
+        self.test_mse_loss_eval_mode()
+        self.test_cross_entropy_loss_basic()
+        self.test_cross_entropy_loss_with_weights()
+        self.test_cross_entropy_loss_single_class()
+        self.test_bce_with_logits_loss_basic()
+        self.test_bce_with_logits_loss_pos_weight()
+        self.test_bce_with_logits_loss_single_output()
+        self.test_loss_functions_chain()
+        self.test_loss_functions_edge_cases()
+        self.test_loss_functions_batch_sizes()
 
 
 
