@@ -5,14 +5,13 @@ import torch.nn.functional as F
 from custom_tensor import CustomTensor
 from collections import OrderedDict
 from .__init__ import device, dtype
-
 class Module:
     """
-    Base class for all neural network modules. Your models should also subclass this class.
-    Modules can also contain other Modules, allowing to nest them in a tree structure.
+    Base class for all neural network modules.
     """
     device=device
     dtype=dtype
+    __slots__ = ('_parameters', '_modules', 'training')
     def __init__(self):
         self._parameters = OrderedDict()
         self._modules = OrderedDict()
@@ -63,7 +62,7 @@ class Module:
 class Linear(Module):
     """Applies a linear transformation to the incoming data: y = xA^T + b
     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
-
+    __slots__ = ('in_features', 'out_features', 'graph', 'weight', 'bias','__weakref__')
     _ACTIVATION_INIT = {
         "relu": ("kaiming_uniform_", "relu"),
         "gelu": ("kaiming_uniform_", "relu"),
@@ -173,6 +172,7 @@ class Linear(Module):
 class Conv2d(Module):
     """Applies a 2D convolution over an input signal composed of several input planes.
     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
+    __slots__ = ('in_channels', 'out_channels', 'kernel_size', 'stride', 'dilation', 'padding', 'groups', 'graph', 'weight', 'bias','__weakref__')
 
     # Lookup table for activation initialization
     _ACTIVATION_INIT = {
@@ -388,6 +388,7 @@ class Conv2d(Module):
     #     )
 
 class BatchNorm_Nd(Module):
+    __slots__ = ('num_features', 'eps', 'momentum', 'graph', 'weight', 'bias', 'running_mean', 'running_var', '_channel_axis', '_shape_cache','__weakref__')
     def __new__(cls, num_features, eps=1e-5, momentum=0.1, *, graph=None):
         assert num_features > 0
         return super().__new__(cls)
@@ -524,6 +525,7 @@ class BatchNorm_Nd(Module):
         return outer_term * (term_1 + term_2 + term3)
 
 class MaxPool2d(Module):
+    __slots__ = ('kernel_size', 'stride', 'dilation', 'padding', 'graph','__weakref__')
     def __new__(cls, *, kernel_size, stride=1, padding=0, dilation=1, graph=None):
         assert isinstance(kernel_size, int) or len(kernel_size) == 2
         assert isinstance(stride, int) or len(stride) == 2
@@ -602,6 +604,7 @@ class MaxPool2d(Module):
         return f"MaxPool2d(kernel_size={self.kernel_size}, stride={self.stride}, padding={self.padding})"
 
 class AvgPool2d(Module):
+    __slots__ = ('kernel_size', 'stride', 'padding', 'graph','__weakref__')
     def __new__(cls, *, kernel_size, stride=1, padding=0, graph=None):
         assert isinstance(kernel_size, int) or len(kernel_size) == 2
         assert isinstance(stride, int) or len(stride) == 2
@@ -682,6 +685,7 @@ class AvgPool2d(Module):
             return grad_input
 
 class ReLu(Module):
+    __slots__ = ('graph','__weakref__')
     def __init__(self, *, graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
@@ -712,6 +716,7 @@ class ReLu(Module):
         return result
 
 class Leaky_ReLu(Module):
+    __slots__ = ('graph', 'negative_slope', '__weakref__')
     def __new__(cls, *, negative_slope=0.01, graph=None):
         assert negative_slope > 0
         return super().__new__(cls)
@@ -747,6 +752,7 @@ class Leaky_ReLu(Module):
         return result
 
 class Elu(Module):
+    __slots__ = ('graph', 'alpha', '__weakref__')
     def __new__(cls, *, alpha=1.0, graph=None):
         assert alpha > 0
         return super().__new__(cls)
@@ -783,6 +789,7 @@ class Elu(Module):
         return result
 
 class GeLu(Module):
+    __slots__ = ('graph', 'approximate', '__weakref__')
     def __new__(cls, *, approximate='none', graph=None):
         assert approximate in {"none", "tanh"}
         return super().__new__(cls)
@@ -835,6 +842,7 @@ class GeLu(Module):
             return (0.5 * tanh_u + 0.5 * (1 - tanh_u.square()) * (sqrt_2_over_pi * poly * x) + 0.5) * grad_output
 
 class Sigmoid(Module):
+    __slots__ = ('graph', '__weakref__')
     def __new__(cls, *, graph=None):
         return super().__new__(cls)
 
@@ -867,6 +875,7 @@ class Sigmoid(Module):
         return result
 
 class Tanh(Module):
+    __slots__ = ('graph', '__weakref__')
     def __new__(cls, *, graph=None):
         return super().__new__(cls)
 
@@ -899,6 +908,7 @@ class Tanh(Module):
         return result
 
 class Silu(Module):
+    __slots__ = ('graph', '__weakref__')
     def __new__(cls, *, graph=None):
         return super().__new__(cls)
 
@@ -933,6 +943,7 @@ class Silu(Module):
 
 class Swish(Module):
     # TODO: implement in future
+    __slots__ = ('graph', 'B', 'B_initial', '__weakref__')
     def __new__(cls, *, B_initial=1.0, graph=None):
         assert B_initial > 0
         return super().__new__(cls)
@@ -977,7 +988,7 @@ class Swish(Module):
         self.graph.add_edge(self.B._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
-    
+
     @torch.compile
     def _calculate_gradients(self, input_tensor, result, output_tensor, B_tensor):
         grad_output =result.grad

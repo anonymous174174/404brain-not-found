@@ -72,6 +72,12 @@ class CustomTensor:
         """Sets the gradient of the underlying tensor to zero."""
         if self.tensor.grad is not None:
             self.tensor.grad.zero_()
+    
+    def to(self, device, dtype=None):
+        if dtype is None:
+            dtype = self.tensor.dtype
+        self.tensor = self.tensor.to(device, dtype)
+        return self
 
 
     # --- Broadcasting Helper ---
@@ -372,7 +378,10 @@ class CustomTensor:
         return result
     def __ipow__(self,other):
         self.tensor.pow_(other)
-
+    def __pow__(self,other):
+      if isinstance(other, numbers.Number):
+          return self.pow(other)
+      return NotImplemented
     def exp(self):
         out = torch.exp(self.tensor)
         if not self._custom_requires_grad:
@@ -658,7 +667,7 @@ class CustomTensor:
         if isinstance(weightage_tensor, numbers.Number):
             self.tensor.grad = torch.full_like(self.tensor, fill_value=weightage_tensor)
         elif isinstance(weightage_tensor, torch.Tensor):
-            self.tensor.grad = weightage_tensor.clone()
+            self.tensor.grad = weightage_tensor.to(self.tensor.device)#.clone()
 
         nodes_to_process = graph.reverse_toposort_from_tensor(self._node_id)
 

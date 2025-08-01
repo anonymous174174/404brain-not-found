@@ -5,10 +5,6 @@ def verify_conv2d_backward_logic():
     """
     Verifies that the manual backward pass logic for a 2D convolution,
     implemented with torch.nn.functional, matches PyTorch's autograd.
-
-    This corrected version properly handles grouped convolutions for the
-    weight gradient calculation and correctly calculates output_padding for
-    the input gradient calculation.
     """
     print("--- Verifying Conv2d Backward Pass Logic ---")
 

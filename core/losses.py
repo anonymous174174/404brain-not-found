@@ -6,6 +6,7 @@ from custom_tensor import CustomTensor
 from .__init__ import device, dtype
 # TODO Lone MSE , MSE with softmax, MSE with sigmoid, cross entropy with softmax, binary cross entropy with sigmoid
 class MSE(Module):
+    __slots__ = ('graph','__weakref__')
     def __init__(self, *, graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
@@ -88,6 +89,7 @@ class MSE(Module):
             raise ValueError(f"Unsupported weight shape in backward: {weight.shape}")
 
 class CrossEntropyLoss(Module):
+    __slots__ = ('graph','__weakref__')
     def __init__(self, *, graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
@@ -159,6 +161,7 @@ class CrossEntropyLoss(Module):
         return grad
 
 class BCEWithLogitsLoss(Module):
+    __slots__ = ('graph','__weakref__')
     def __init__(self, *, graph=None):
 
         super().__init__()
