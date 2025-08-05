@@ -26,7 +26,7 @@ class CustomTensor:
         self.tensor.requires_grad_(False)
         self._custom_requires_grad = _custom_requires_grad
         self._node_id = None
-        self._backward = lambda: None
+        self._backward = CustomTensor._empty_backward_hook
         self.graph = None
         self._is_leaf = is_leaf
 
@@ -44,6 +44,10 @@ class CustomTensor:
         graph.add_tensor_graph(self)
         if not is_leaf:
             graph.add_non_leaf_tensor_reference(self)
+    @staticmethod        
+    def _empty_backward_hook():
+      """A picklable placeholder for the backward function."""
+      return None
 
     def clear(self):
         # NEVER CALL FOR LEAF TENSORS
@@ -51,14 +55,14 @@ class CustomTensor:
         self.tensor.grad = None
         self._custom_requires_grad = False
         self._node_id = None
-        self._backward = lambda: None
+        self._backward =  CustomTensor._empty_backward_hook#lambda: None
         self.graph = None
 
     def clear_full(self):
         self.tensor = None
         self._custom_requires_grad = False
         self._node_id = None
-        self._backward = lambda: None
+        self._backward = CustomTensor._empty_backward_hook
         self.graph = None
 
     def _zero_grad(self):
