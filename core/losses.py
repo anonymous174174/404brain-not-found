@@ -229,3 +229,6 @@ class BCEWithLogitsLoss(Module):
             grad = grad * weight_factor
 
         return grad
+    
+if __name__ == "__main__":
+    pass

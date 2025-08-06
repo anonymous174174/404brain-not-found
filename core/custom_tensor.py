@@ -44,26 +44,45 @@ class CustomTensor:
         graph.add_tensor_graph(self)
         if not is_leaf:
             graph.add_non_leaf_tensor_reference(self)
+
+    def _clear_graph_references(self):
+        """Safely nullifies graph-related attributes to make the tensor picklable."""
+        self.graph = None
+        self._node_id = None
+        self._custom_requires_grad = False
+        self._backward = CustomTensor._empty_backward_hook
+        self.tensor.grad = None
+
+    def _add_to_graph(self,graph):
+        assert graph is not None
+        assert self._is_leaf
+        self._custom_requires_grad = True
+        self.graph = weakref.proxy(graph)
+        graph.add_tensor_graph(self)
+
+
+
     @staticmethod
     def _empty_backward_hook():
       """A picklable placeholder for the backward function."""
       return None
 
     def clear(self):
-        # NEVER CALL FOR LEAF TENSORS
-        if self._is_leaf: return # ideally this line should never execute, this is just a gaurd rail
+        """A clearing function for intermediate tensors and saving the model"""
         self.tensor.grad = None
         self._custom_requires_grad = False
         self._node_id = None
         self._backward = CustomTensor._empty_backward_hook#lambda: None
         self.graph = None
 
-    def clear_full(self):
+    def del_tensor(self):
+        # Makes the custom Tensor object completely useless and makes it occupy as little memory as possible
         self.tensor = None
         self._custom_requires_grad = False
         self._node_id = None
         self._backward = CustomTensor._empty_backward_hook
         self.graph = None
+        self._is_leaf = False
 
     def _zero_grad(self):
         """Sets the gradient of the underlying tensor to zero."""
@@ -697,7 +716,16 @@ class CustomTensor:
     def shape(self): return self.tensor.shape
     @property
     def grad(self): return self.tensor.grad
-    def __repr__(self): return f"CustomTensor({self.tensor}, grad_fn={self._backward != None}, requires_grad={self._custom_requires_grad})"
+    def __repr__(self):
+      return (
+          f"{self.__class__.__name__}(\n"
+          f"  memory_address   = {hex(id(self.tensor))},\n"
+          f"  shape            = {self.tensor.shape},\n"
+          f"  requires_grad    = {self._custom_requires_grad},\n"
+          f"  node_id          = {self._node_id},\n"
+          f"  is_leaf          = {self._is_leaf}\n"
+          f")"
+             )
     # def __del__(self):
     #     if self._node_id is not None and self._is_leaf:
     #         try:

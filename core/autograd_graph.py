@@ -82,6 +82,6 @@ class AutogradGraph:
 
     def __repr__(self):
         return f"CustomAutogradGraph(nodes={self.graph.num_nodes()}, edges={self.graph.num_edges()})"
-    
+
 if __name__ == "__main__":
     pass

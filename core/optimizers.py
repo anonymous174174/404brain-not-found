@@ -231,3 +231,6 @@ class Lion(Optimizer):
                 p.add_(update, alpha=-lr)
                 exp_avg.mul_(beta2).add_(grad, alpha=1. - beta2)
 
+
+if __name__ == "__main__":
+    pass

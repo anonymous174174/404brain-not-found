@@ -11,30 +11,47 @@ class Module:
     """
     device=device
     dtype=dtype
-    __slots__ = ('_parameters', '_modules', 'training')
+    __slots__ = ('_parameters', '_modules','_buffers', 'training')
     def __init__(self):
         self._parameters = OrderedDict()
         self._modules = OrderedDict()
-        # self._buffers = OrderedDict()
+        self._buffers = OrderedDict()
         self.training = True #
 
     def __setattr__(self, name, value):
         if isinstance(value, CustomTensor):
-            if value._custom_requires_grad:
-                self._parameters[name] = value
+            #if value._custom_requires_grad:
+            self._parameters[name] = value
         elif isinstance(value, Module):
             self._modules[name] = value
         # Handle buffers (non-parameter tensors like running_mean in BatchNorm)
-        # elif isinstance(value, torch.Tensor):
-        #     self._buffers[name] = value
+        elif isinstance(value, torch.Tensor):
+             self._buffers[name] = value
         super().__setattr__(name, value)
 
+    def buffers(self):
+        """Returns a list of all buffers in the module and its submodules."""
+        buffs = list(self._buffers.values())
+        for module in self._modules.values():
+            buffs.extend(module.buffers())
+        return buffs
     def parameters(self):
         """Returns a list of all parameters in the module and its submodules."""
         params = list(self._parameters.values())
         for module in self._modules.values():
             params.extend(module.parameters())
         return params
+    # def modules(self):
+    #     """Returns a list of all modules in the network."""
+    #     modules_list = list(self._modules.values())
+    #     for module in self._modules.values():
+    #         modules_list.extend(module.modules())
+    #     return modules_list
+    def modules(self):
+        """Returns an iterator over all submodules and the module in the network."""
+        yield self
+        for module in self._modules.values():
+            yield from module.modules()
 
     def zero_grad(self):
         """Sets gradients of all model parameters to zero."""
@@ -52,9 +69,79 @@ class Module:
         self.training = False
         for module in self._modules.values():
             module.eval()
+    def detach_graph(self):
+        for p in self.parameters():
+            p._clear_graph_references()
+        for module in self.modules():
+            if hasattr(module, 'graph'):
+                module.graph = None
+    def attach_graph(self,graph):
+        for p in self.parameters():
+            p._add_to_graph(graph)
+        for module in self.modules():
+            if hasattr(module, 'graph'):
+                module.graph = weakref.proxy(graph)
+    def prepare_for_saving(self):
+        for p in self.parameters():
+            p.clear()
+
+
+    def verify_all_graph_references_are_weak(self):
+        c=0
+        for p in self.parameters():
+            graph = getattr(p, "graph", None)
+            if graph is not None and not isinstance(graph, weakref.ProxyType):
+                print(f"STRONG REFERENCE FOR GRAPH FOUND IN PARAMETER {p}")
+                c+=1
+
+        for module in self.modules():
+            graph = getattr(module, "graph", None)
+            if graph is not None and not isinstance(graph, weakref.ProxyType):
+                print(f"STRONG REFERENCE FOR GRAPH FOUND IN MODULE {module}")
+                c+=1
+        if c==0:
+            print("NO STRONG REFERENCES FOUND")
+
+
+    def verify_all_parameters_are_on_the_same_device(self,device):
+        c=0
+        device = torch.device(device)
+        for p in self.parameters():
+            if p.tensor.device != device:
+                print(f"PARAMETER {p} IS NOT ON THE SAME DEVICE {device}")
+                c+=1
+        for b in self.buffers():
+            if b.device != device:
+                print(f"BUFFER {b} IS NOT ON THE SAME DEVICE {device}")
+                c+=1
+        if c==0:
+            print("ALL PARAMETERS ARE ON THE SAME DEVICE")
+
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
+
+    def to(self, device, dtype=None):
+      """Moves and/or casts the parameters and buffers."""
+      # 1. Recursively call .to() on all sub-modules
+      for module in self._modules.values():
+          module.to(device, dtype)
+
+      # 2. Move the parameters of the current module
+      for param in self._parameters.values():
+          param.to(device, dtype)
+
+      # 3. Move the buffers of the current module
+      for name, buf in self._buffers.items():
+          # Create the new tensor on the correct device
+          new_buf = buf.to(device, dtype)
+          # tensor.to in pytorch creates a new tensor so we must update the references in both the _buffers dictionary and the batchnorm_nd.running_mean or any other var by the same buffer
+          # Reassign the buffer in the dictionary AND on the attribute itself
+          self._buffers[name] = new_buf
+          super().__setattr__(name, new_buf)
+
+      return self
+
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError("Subclasses of Module must implement a forward method.")
@@ -86,7 +173,7 @@ class Linear(Module):
 
         # Initialize weight
         self.weight = CustomTensor(torch.empty(out_features, in_features, device=Linear.device, dtype=Linear.dtype),
-                                 _custom_requires_grad=True, graph=graph, is_leaf=True)
+                                 _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True)
 
         init_method, init_param = self._ACTIVATION_INIT[activation]
         if init_method == "kaiming_uniform_":
@@ -96,7 +183,7 @@ class Linear(Module):
 
         # Initialize bias
         self.bias = CustomTensor(torch.zeros(out_features,device=Linear.device, dtype=Linear.dtype),
-                               _custom_requires_grad=True, graph=graph, is_leaf=True) if bias else None
+                               _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True) if bias else None
 
     def forward(self, input_tensor):
         inp = input_tensor.tensor
@@ -119,9 +206,11 @@ class Linear(Module):
         # Add edges to computation graph
         if input_tensor._custom_requires_grad:
             self.graph.add_edge(input_tensor._node_id, result._node_id)
-        self.graph.add_edge(self.weight._node_id, result._node_id)
+        if self.weight._custom_requires_grad:
+          self.graph.add_edge(self.weight._node_id, result._node_id)
         if self.bias is not None:
-            self.graph.add_edge(self.bias._node_id, result._node_id)
+            if self.bias._custom_requires_grad:
+              self.graph.add_edge(self.bias._node_id, result._node_id)
 
         # Create weak references for backward pass
         refs = {
@@ -206,7 +295,7 @@ class Conv2d(Module):
         self.graph = weakref.proxy(graph) if graph is not None else None
 
         weight_shape = (out_channels, in_channels // groups, *self.kernel_size)
-        self.weight = CustomTensor(torch.empty(weight_shape,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.weight = CustomTensor(torch.empty(weight_shape,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True)
 
         # Use lookup table for initialization
         init_method, init_param = self._ACTIVATION_INIT[activation]
@@ -215,7 +304,7 @@ class Conv2d(Module):
         else:  # xavier_uniform_
             torch.nn.init.xavier_uniform_(self.weight.tensor, gain=init_param)
 
-        self.bias = CustomTensor(torch.zeros(out_channels,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True) if bias else None
+        self.bias = CustomTensor(torch.zeros(out_channels,device=Conv2d.device,dtype=Conv2d.dtype), _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True) if bias else None
 
     def forward(self, input_tensor):
         output_tensor = F.conv2d(
@@ -230,11 +319,13 @@ class Conv2d(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
-
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
-        self.graph.add_edge(self.weight._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if self.weight._custom_requires_grad:
+          self.graph.add_edge(self.weight._node_id, result._node_id)
         if self.bias is not None:
-            self.graph.add_edge(self.bias._node_id, result._node_id)
+            if self.bias._custom_requires_grad:
+              self.graph.add_edge(self.bias._node_id, result._node_id)
 
         # Create weak references for backward pass
         refs = {
@@ -398,10 +489,10 @@ class BatchNorm_Nd(Module):
         self.num_features = num_features
         self.eps = eps
         self.momentum = momentum
-        self.graph = weakref.proxy(graph)
+        self.graph = weakref.proxy(graph) if graph is not None else None
 
-        self.weight = CustomTensor(torch.ones(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
-        self.bias = CustomTensor(torch.zeros(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.weight = CustomTensor(torch.ones(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True)
+        self.bias = CustomTensor(torch.zeros(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype), _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True)
 
         self.running_mean = torch.zeros(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype)
         self.running_var = torch.ones(num_features,device=BatchNorm_Nd.device,dtype=BatchNorm_Nd.dtype)
@@ -500,9 +591,12 @@ class BatchNorm_Nd(Module):
 
         # Build computation graph
         graph = self.graph
-        graph.add_edge(input_tensor._node_id, result._node_id)
-        graph.add_edge(self.weight._node_id, result._node_id)
-        graph.add_edge(self.bias._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          graph.add_edge(input_tensor._node_id, result._node_id)
+        if self.weight._custom_requires_grad:
+          graph.add_edge(self.weight._node_id, result._node_id)
+        if self.bias._custom_requires_grad:
+          graph.add_edge(self.bias._node_id, result._node_id)
 
         # Create and assign backward function
         result._backward = self._create_backward(
@@ -547,12 +641,13 @@ class MaxPool2d(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
-            if input_ref.tensor.grad is None:
-                input_ref._zero_grad()
-            grad_output = result_ref.tensor.grad
-            input = input_ref.tensor
-            grad_input = MaxPool2d._calculate_gradient_input_tensor(grad_output, cached_indices, input)
-            input_ref.tensor.grad.add_(grad_input)
+            if input_ref._custom_requires_grad:
+              if input_ref.tensor.grad is None:
+                  input_ref._zero_grad()
+              grad_output = result_ref.tensor.grad
+              input = input_ref.tensor
+              grad_input = MaxPool2d._calculate_gradient_input_tensor(grad_output, cached_indices, input)
+              input_ref.tensor.grad.add_(grad_input)
 
         return _backward
 
@@ -576,7 +671,8 @@ class MaxPool2d(Module):
 
         graph = self.graph
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=graph,due_to_operation=True, is_leaf=False)
-        graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          graph.add_edge(input_tensor._node_id, result._node_id)
 
 
         result._backward = self._create_backward(input_tensor, result, max_indices)
@@ -624,6 +720,8 @@ class AvgPool2d(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
+
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -651,7 +749,8 @@ class AvgPool2d(Module):
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
         graph = self.graph
-        graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          graph.add_edge(input_tensor._node_id, result._node_id)
 
         result._backward = self.create_backward(input_tensor, result)
 
@@ -696,6 +795,7 @@ class ReLu(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -711,7 +811,8 @@ class ReLu(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result)
         return result
 
@@ -732,6 +833,7 @@ class Leaky_ReLu(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -747,7 +849,8 @@ class Leaky_ReLu(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result)
         return result
 
@@ -768,6 +871,7 @@ class Elu(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -784,7 +888,8 @@ class Elu(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
@@ -805,6 +910,7 @@ class GeLu(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -819,7 +925,8 @@ class GeLu(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result)
         return result
 
@@ -856,6 +963,7 @@ class Sigmoid(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -870,7 +978,8 @@ class Sigmoid(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
@@ -889,6 +998,7 @@ class Tanh(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -903,7 +1013,8 @@ class Tanh(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
@@ -922,6 +1033,7 @@ class Silu(Module):
         result_ref = weakref.proxy(result)
 
         def _backward():
+          if input_ref._custom_requires_grad:
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
@@ -937,7 +1049,8 @@ class Silu(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
@@ -951,7 +1064,7 @@ class Swish(Module):
     def __init__(self, *, B_initial=1.0, graph=None):
         super().__init__()
         self.graph = weakref.proxy(graph) if graph is not None else None
-        self.B = CustomTensor([B_initial], _custom_requires_grad=True, graph=graph, is_leaf=True)
+        self.B = CustomTensor([B_initial], _custom_requires_grad=True if graph is not None else False, graph=graph if graph is not None else None, is_leaf=True)
         self.B_initial = B_initial
 
     def _create_backward(self, input_tensor, result, output_tensor):
@@ -961,19 +1074,31 @@ class Swish(Module):
         B_ref = weakref.proxy(self.B)
 
         def _backward():
-            if input_ref.tensor.grad is None:
-                input_ref._zero_grad()
-            if B_ref.tensor.grad is None:
-                B_ref._zero_grad()
-            grad_input, grad_B = self._calculate_gradients(input_ref.tensor, result_ref.tensor, output_tensor, B_ref.tensor)
-            # grad_output = result_ref.tensor.grad
-            # sig_B_x = output_tensor / input_ref.tensor
-            # common = sig_B_x * (1 - sig_B_x) * grad_output
+          input_requires_grad = input_ref._custom_requires_grad
+          B_requires_grad = B_ref._custom_requires_grad
+          if not input_requires_grad and not B_requires_grad:
+              return
+          grad_input, grad_B = self._calculate_gradients(
+              input_tensor=input_ref.tensor,
+              result=result_ref.tensor,
+              output_tensor=output_tensor,
+              B_tensor=B_ref.tensor
+          )
+          # grad_output = result_ref.tensor.grad
+          # sig_B_x = output_tensor / input_ref.tensor
+          # common = sig_B_x * (1 - sig_B_x) * grad_output
 
-            # grad_input = sig_B_x * grad_output + input_ref.tensor * B_ref.tensor * common
-            # grad_B = input_ref.tensor.square() * common
-            input_ref.tensor.grad.add_(grad_input)
-            B_ref.tensor.grad.add_(grad_B)
+          # grad_input = sig_B_x * grad_output + input_ref.tensor * B_ref.tensor * common
+          # grad_B = input_ref.tensor.square() * common
+
+          if input_requires_grad:
+              if input_ref.tensor.grad is None:
+                  input_ref._zero_grad()
+              input_ref.tensor.grad.add_(grad_input)
+          if B_requires_grad:
+              if B_ref.tensor.grad is None:
+                  B_ref._zero_grad()
+              B_ref.tensor.grad.add_(grad_B)
 
         return _backward
 
@@ -984,8 +1109,10 @@ class Swish(Module):
             return CustomTensor(output_tensor, due_to_operation=True)
 
         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,due_to_operation=True, is_leaf=False)
-        self.graph.add_edge(input_tensor._node_id, result._node_id)
-        self.graph.add_edge(self.B._node_id, result._node_id)
+        if input_tensor._custom_requires_grad:
+          self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if self.B._custom_requires_grad:
+          self.graph.add_edge(self.B._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
 
@@ -998,4 +1125,3 @@ class Swish(Module):
         grad_B = input_tensor.square() * common
         grad_B = grad_B.sum()
         return grad_input, grad_B
-
