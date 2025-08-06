@@ -86,7 +86,7 @@ class Module:
             p.clear()
 
 
-    def verify_all_graph_references_are_weak(self):
+    def verify_all_graph_references_are_weak(self):    
         c=0
         for p in self.parameters():
             graph = getattr(p, "graph", None)
