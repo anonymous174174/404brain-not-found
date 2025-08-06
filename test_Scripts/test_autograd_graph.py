@@ -7,11 +7,16 @@ from typing import Optional, Any
 import sys
 import gc
 import pytest
-from autograd_graph import AutogradGraph
-from custom_tensor import CustomTensor
-from module import *
-from losses import *
-from optimizers import *
+import os
+import sys
+# core_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# sys.path.append(core_dir)
+from core.autograd_graph import AutogradGraph
+from core.custom_tensor import CustomTensor
+from core.module import *
+from core.losses import *
+from core.optimizers import *
+from core import device,dtype
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0

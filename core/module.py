@@ -2,9 +2,9 @@ import torch
 import math
 import weakref
 import torch.nn.functional as F
-from custom_tensor import CustomTensor
+from .custom_tensor import CustomTensor
 from collections import OrderedDict
-from .__init__ import device, dtype
+from core import device, dtype
 class Module:
     """
     Base class for all neural network modules.

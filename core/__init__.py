@@ -9,7 +9,7 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-torch.autograd.set_grad_enabled(False)
+#torch.autograd.set_grad_enabled(False)
 # datatype of tensors
 dtype = torch.float32 
 # Detect hardware availability
@@ -46,11 +46,19 @@ else:
 device_summary = f"Running on: {'GPU' if RUN_ON_GPU else 'MPS' if RUN_ON_MPS else 'TPU' if RUN_ON_TPU else 'CPU'}"
 logging.info(device_summary)
 
-__all__ = []
+__all__ = [
+    "custom_tensor",
+    "losses",
+    "module",
+    "autograd_graph",
+    "optimizers"
+]
 from . import (
-    tensor,
+    custom_tensor,
     autograd_graph,
-    module
+    module,
+    optimizers,
+    losses
 )
 
 if __name__ == "__main__":

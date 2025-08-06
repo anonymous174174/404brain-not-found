@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import weakref
 import numbers
 import math
-from .__init__ import device, dtype
+from core import device, dtype
 class CustomTensor:
     """
     A custom tensor class that wraps a PyTorch tensor to enable a custom
@@ -732,5 +732,3 @@ class CustomTensor:
     #             if self.graph: self.graph.delete_node(self._node_id)
     #         except ReferenceError: # Graph might be gone first
     #             pass
-if __name__ == "__main__":
-    pass

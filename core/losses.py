@@ -1,9 +1,9 @@
-from module import Module
+from .module import Module
 import weakref
 import torch
 import torch.nn.functional as F
-from custom_tensor import CustomTensor
-from .__init__ import device, dtype
+from .custom_tensor import CustomTensor
+from core import device, dtype
 # TODO Lone MSE , MSE with softmax, MSE with sigmoid, cross entropy with softmax, binary cross entropy with sigmoid
 class MSE(Module):
     __slots__ = ('graph','__weakref__')
@@ -230,5 +230,3 @@ class BCEWithLogitsLoss(Module):
 
         return grad
     
-if __name__ == "__main__":
-    pass
