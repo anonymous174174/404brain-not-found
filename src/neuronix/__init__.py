@@ -5,6 +5,7 @@ import logging
 # disabling AutoGrad for the entire module
 logging.basicConfig(
     filename='core.log',
+    filemode='w',
     level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
@@ -60,6 +61,6 @@ from . import (
     optimizers,
     losses
 )
-
+__version__ = "0.0.1"
 if __name__ == "__main__":
     warn("This module is not intended to be run directly. Please import it in your application.")

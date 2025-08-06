@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuronix"
+version = "0.0.1"
+description = "A custom autograd engine and deep learning framework."
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "torch>=2.7.1",
+    "rustworkx>=0.16.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/anonymous174174/404brain-not-found"
+
+[tool.setuptools]
+package-dir = {"" = "src"} 
+packages = ["neuronix"]     

@@ -4,7 +4,7 @@ import weakref
 import torch.nn.functional as F
 from .custom_tensor import CustomTensor
 from collections import OrderedDict
-from core import device, dtype
+from neuronix import device, dtype
 class Module:
     """
     Base class for all neural network modules.

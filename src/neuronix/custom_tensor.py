@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import weakref
 import numbers
 import math
-from core import device, dtype
+from neuronix import device, dtype
 class CustomTensor:
     """
     A custom tensor class that wraps a PyTorch tensor to enable a custom

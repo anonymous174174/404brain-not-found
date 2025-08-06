@@ -6,7 +6,7 @@ A custom deep learning framework built from scratch in Python for educational an
 
 This is a learning-focused implementation that recreates core deep learning functionality from the ground up. It's designed to help understand how autograd engines, neural network modules, and optimization algorithms actually work under the hood.
 
-**⚠️ Important:** Neuronix is for learning and research purposes only. For production applications, use established frameworks like PyTorch, TensorFlow, or JAX.
+**⚠️ Important:** This is an educational tool, not a production framework. Use PyTorch, TensorFlow, or JAX for real applications.
 
 ## 🚀 Features
 
@@ -21,7 +21,7 @@ This is a learning-focused implementation that recreates core deep learning func
 
 - **Tensor operations**: Standard arithmetic, matrix ops, and mathematical functions
 - **Layers**: Linear, Conv2d, BatchNorm, pooling layers
-- **Activations**: ReLU, GELU, Sigmoid, Tanh, SiLU, ELU, Leaky ReLU, Swish
+- **Activations**: ReLU, GELU, Sigmoid, Tanh, SiLU, ELU, Leaky ReLU
 - **Loss functions**: MSE, CrossEntropy, BCEWithLogits
 - **Optimizers**: SGD, Momentum, Nesterov, AdamW, Lion
 
@@ -91,32 +91,30 @@ The implementation has been validated against PyTorch for:
 - ✅ Broadcasting behavior consistency  
 - ✅ Memory usage patterns
 - ✅ Numerical stability
-You can verify the same by running /tests/test_comprehensive.py
 
 ## 📂 Project Structure
 
 ```bash
 404brain-not-found/
-├── neuronix/
-│   ├── autograd_graph.py    # Autograd Graph Context Manager
-│   ├── custom_tensor.py     # Tensor object (A wrapper around torch tensor)
+├── core/
+│   ├── __init__.py          # Core tensor and graph classes
 │   ├── module.py            # Neural network layers
 │   ├── losses.py            # Loss functions
 │   └── optimizers.py        # Optimization algorithms
 ├── tests/                   # Test scripts and notebooks
-├── examples/                # Example Architectures trained on Cifar Datasets (To be added)
+├── examples/               # Usage examples and tutorials
 └── README.md
 ```
 
 ## 🤝 Contributing
 
-This is a learning project! Contributions, bug reports are welcome. Areas for exploration:
+This is a learning project! Contributions, bug reports, and feature requests are welcome. Areas for exploration:
 
-- [ ] Higher-order derivatives
-- [ ] Additional Modules
-- [ ] Mutli-Gpu Graph Management
-- [ ] Object Pooling for Efficiency
-- [ ] Better Methods for saving Models
+- [ ] Second-order derivatives (Hessian computation)
+- [ ] Sparse gradient operations  
+- [ ] Additional optimization algorithms
+- [ ] More activation functions
+- [ ] Custom loss functions
 
 ## 📚 Learning Resources
 
@@ -142,4 +140,4 @@ MIT License - feel free to use this for learning and experimentation.
 
 ---
 
-*Built to understand the madness and brilliance behind modern deep learning frameworks. Every operation implemented from first principles.* 🎓
+*Built to demystify the magic behind modern deep learning frameworks. Every operation implemented from first principles with educational clarity in mind.* 🎓

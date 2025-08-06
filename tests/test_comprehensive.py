@@ -9,14 +9,13 @@ import gc
 import pytest
 import os
 import sys
-# core_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# sys.path.append(core_dir)
-from core.autograd_graph import AutogradGraph
-from core.custom_tensor import CustomTensor
-from core.module import *
-from core.losses import *
-from core.optimizers import *
-from core import device,dtype
+
+from neuronix.autograd_graph import AutogradGraph
+from neuronix.custom_tensor import CustomTensor
+from neuronix.module import *
+from neuronix.losses import *
+from neuronix.optimizers import *
+from neuronix import device,dtype
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
