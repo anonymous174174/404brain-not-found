@@ -9,7 +9,10 @@ from neuronix.losses import *
 from neuronix.optimizers import *
 from neuronix.config import device,dtype
 import time
-
+torch.set_default_dtype(dtype)
+torch.set_default_device(device)
+rtol = 1e-4
+atol = 1e-6
 """Calculations for CNN Architecture
 The calculations assume an input image shape of 224x224 with 3 color channels (RGB).
 
@@ -137,7 +140,7 @@ Dense Layer: The input to the first dense layer will be a vector of size 2048.
 """
 
 # Creating the model with pytorch 
-print("Heads up the comparison between torch result and neuronix is with an rtol of 1e-4")
+print(f"Heads up the comparison between torch result and neuronix is with an  rtol = {rtol}, atol= {atol}")
 class ConvBNActMaxPool(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size_conv, stride_conv, padding_conv,
                  kernel_size_pool, stride_pool, padding_pool):
@@ -407,7 +410,7 @@ with AutogradGraph() as graph, torch.inference_mode():
   sample_input = CustomTensor(sample_input_torch.clone(), _custom_requires_grad=False, graph=None)
   output = cnn_model(sample_input)
   output_torch = cnn_model_pytorch(sample_input_torch)
-  print(torch.allclose(output.tensor,output_torch,rtol=1e-4))
+  print(torch.allclose(output.tensor,output_torch,rtol = rtol, atol=atol))
 
 del cnn_model,cnn_model_pytorch,sample_input,sample_input_torch
 
@@ -548,7 +551,7 @@ with AutogradGraph() as graph:
   cnn_model.train()
   cnn_model_pytorch.train()
 
-  sample_input_torch = torch.randn(3,3,224,224)
+  sample_input_torch = torch.randn(1,3,224,224)
   sample_input = CustomTensor(sample_input_torch.clone(),_custom_requires_grad=True,graph=graph)
   output = cnn_model(sample_input)
   output_torch = cnn_model_pytorch(sample_input_torch)
@@ -571,7 +574,7 @@ def compare_grads(param1, param2, name):
     if grad1 is None or grad2 is None:
         print(f"{name}: One of the gradients is None.")
     else:
-        equal = torch.allclose(grad1, grad2, atol=1e-4)
+        equal = torch.allclose(grad1, grad2, rtol = rtol, atol=atol)
         print(f"{name}: {'✅ Same' if equal else '❌ Different'}")
 
 # Layer-wise comparisons
