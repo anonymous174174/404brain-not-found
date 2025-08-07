@@ -370,7 +370,7 @@ class Conv2d(Module):
                 )
         return _backward
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_gradient_input_tensor(input_tensor,weight_tensor,grad_output,stride,padding,kernel_size,dilation,groups):
         h_in, w_in = input_tensor.shape[2], input_tensor.shape[3]
         h_out, w_out = grad_output.shape[2], grad_output.shape[3]
@@ -392,7 +392,7 @@ class Conv2d(Module):
         )
         return grad_input
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_gradient_weight_tensor_loop(in_channels,groups,out_channels,input_tensor,grad_output,stride,padding,dilation):
         #The gradient w.r.t. the weights is a convolution
         # of the input (X) and the output gradient (grad_output).
@@ -502,7 +502,7 @@ class BatchNorm_Nd(Module):
         return self._shape_cache[input_shape]
     
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _compute_stats(_channel_axis, x: torch.Tensor):
         reduce_dims = tuple(i for i in range(x.dim()) if i != _channel_axis)
 
@@ -604,7 +604,7 @@ class BatchNorm_Nd(Module):
 
         return result
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def batchnorm_gradient_for_input_tensor(_channel_axis, *, result_gradient, input_tensor, weight_shaped,
                                           input_minus_mean, inv_std, total_elements):
         reduce_dims = tuple(i for i in range(input_tensor.dim()) if i != _channel_axis)
@@ -677,7 +677,7 @@ class MaxPool2d(Module):
 
         return result
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_gradient_input_tensor(grad_output, indices, input):
       # grad_output: (N, C, H_out, W_out)
       # indices:     (N, C, H_out, W_out)
@@ -754,7 +754,7 @@ class AvgPool2d(Module):
 
         return result
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_gradient_input_tensor(grad_output,input,kernel_size,stride,padding):
 
             h_in, w_in = input.shape[2], input.shape[3]
@@ -928,7 +928,7 @@ class GeLu(Module):
 
     
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def gelu_derivative(x: torch.Tensor, grad_output: torch.Tensor, approximate: str) -> torch.Tensor:
         if approximate == "none":
             sqrt_2_pi = 2.5066282749176025  # torch.tensor(2 * torch.pi).sqrt()
@@ -1113,7 +1113,7 @@ class Swish(Module):
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_gradients(input_tensor, result, output_tensor, B_tensor):
         grad_output =result.grad
         sig_B_x = output_tensor / input_tensor

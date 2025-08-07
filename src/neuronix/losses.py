@@ -71,7 +71,7 @@ class MSE(Module):
 
         return _backward
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_input_grad(input_t, target_t, weight):
         diff = input_t - target_t
         if weight is None:
@@ -139,7 +139,7 @@ class CrossEntropyLoss(Module):
 
         return _backward
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_input_grad(input_tensor, target_tensor,
                              weight):
         batch_size = input_tensor.size(0)
@@ -214,7 +214,7 @@ class BCEWithLogitsLoss(Module):
 
         return _backward
     @staticmethod
-    @torch.compile
+    #@torch.compile
     def _calculate_input_grad(input_tensor, target_tensor, weight):
         sigmoid_input = torch.sigmoid(input_tensor)
 
