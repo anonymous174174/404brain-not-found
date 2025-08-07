@@ -1,12 +1,12 @@
 # Neuronix 🧠
 
-A custom deep learning framework built from scratch in Python for educational and research purposes. This project implements a complete neural network library with automatic differentiation, demonstrating the inner workings of modern ML frameworks like PyTorch.
+A custom deep learning framework built from first principles in Python for Learning and research purposes. This project implements a complete neural network library with a custom automatic differentiation engine, trying to deconstruct the inner workings of modern ML frameworks like PyTorch.
 
 ## ✨ What This Is
 
 This is a learning-focused implementation that recreates core deep learning functionality from the ground up. It's designed to help understand how autograd engines, neural network modules, and optimization algorithms actually work under the hood.
 
-**⚠️ Important:** Neuronix is for learning and research purposes only. For production applications, use established frameworks like PyTorch, TensorFlow, or JAX.
+**⚠️ Disclaimer:** Neuronix is for learning and research purposes only. For production applications, use established frameworks like PyTorch, TensorFlow, or JAX.
 
 ## 🚀 Features
 
@@ -27,7 +27,6 @@ This is a learning-focused implementation that recreates core deep learning func
 
 ### Performance Features
 
-- **JIT compilation** integration with `torch.compile` for critical paths
 - **Efficient memory patterns** with weak references
 - **Broadcasting optimization** for gradient reduction
 
@@ -40,9 +39,7 @@ The framework consists of three main components:
 3. **Modules**: Neural network layers and operations built on top of the tensor system
 
 
-## 🧪 What You Can Learn
-
-This implementation helps understand:
+## 🧪 What I Learned
 
 - **Automatic differentiation**: How gradients are computed and backpropagated
 - **Computation graphs**: How modern ML frameworks track operations
@@ -66,7 +63,7 @@ You can verify the same by running /tests/test_comprehensive.py
 
 ```bash
 404brain-not-found/
-├── neuronix/
+├── src/neuronix/
 │   ├── autograd_graph.py    # Autograd Graph Context Manager
 │   ├── custom_tensor.py     # Tensor object (A wrapper around torch tensor)
 │   ├── module.py            # Neural network layers
@@ -79,7 +76,7 @@ You can verify the same by running /tests/test_comprehensive.py
 
 ## 🤝 Contributing
 
-This is a learning project! Contributions, bug reports are welcome. Areas for exploration:
+This is a learning project Contributions, bug reports are welcome. Areas for exploration for future:
 
 - [ ] Higher-order derivatives
 - [ ] Additional Modules
@@ -111,4 +108,4 @@ MIT License - feel free to use this for learning and experimentation.
 
 ---
 
-*Built to understand the madness and brilliance behind modern deep learning frameworks. Every operation implemented from first principles.* 🎓
+*Built to understand the madness and brilliance behind modern deep learning frameworks.* 🎓
