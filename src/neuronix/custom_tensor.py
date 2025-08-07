@@ -104,8 +104,9 @@ class CustomTensor:
 
 
     # --- Broadcasting Helper ---
+    @staticmethod
     @torch.compile
-    def _reduce_grad_for_broadcast(self, grad, target_shape):
+    def _reduce_grad_for_broadcast( grad, target_shape):
         """Reduces a gradient to match the shape of a tensor that was broadcasted."""
         if grad.shape == target_shape:
             return grad
@@ -169,11 +170,11 @@ class CustomTensor:
         def _backward():
             if self_ref._custom_requires_grad:
                 if self_ref.tensor.grad is None: self_ref._zero_grad()
-                grad_for_self = self_ref._reduce_grad_for_broadcast(result_ref.tensor.grad, self_ref.tensor.shape)
+                grad_for_self = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad, self_ref.tensor.shape)
                 self_ref.tensor.grad.add_(grad_for_self)
             if other_ref._custom_requires_grad:
                 if other_ref.tensor.grad is None: other_ref._zero_grad()
-                grad_for_other = other_ref._reduce_grad_for_broadcast(result_ref.tensor.grad, other_ref.tensor.shape)
+                grad_for_other = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad, other_ref.tensor.shape)
                 other_ref.tensor.grad.add_(grad_for_other)
         result._backward = _backward
         return result
@@ -223,11 +224,11 @@ class CustomTensor:
         def _backward():
             if self_ref._custom_requires_grad:
                 if self_ref.tensor.grad is None: self_ref._zero_grad()
-                grad_for_self = self_ref._reduce_grad_for_broadcast(result_ref.tensor.grad * other_ref.tensor, self_ref.tensor.shape)
+                grad_for_self = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad * other_ref.tensor, self_ref.tensor.shape)
                 self_ref.tensor.grad.add_(grad_for_self)
             if other_ref._custom_requires_grad:
                 if other_ref.tensor.grad is None: other_ref._zero_grad()
-                grad_for_other = other_ref._reduce_grad_for_broadcast(result_ref.tensor.grad * self_ref.tensor, other_ref.tensor.shape)
+                grad_for_other = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad * self_ref.tensor, other_ref.tensor.shape)
                 other_ref.tensor.grad.add_(grad_for_other)
         result._backward = _backward
         return result
@@ -310,12 +311,12 @@ class CustomTensor:
             if self_ref._custom_requires_grad:
                 if self_ref.tensor.grad is None:
                     self_ref._zero_grad()
-                grad_for_self = self_ref._reduce_grad_for_broadcast(result_ref.tensor.grad, self_ref.tensor.shape)
+                grad_for_self = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad, self_ref.tensor.shape)
                 self_ref.tensor.grad.add_(grad_for_self)
             if other_ref._custom_requires_grad:
                 if other_ref.tensor.grad is None:
                     other_ref._zero_grad()
-                grad_for_other = other_ref._reduce_grad_for_broadcast(-result_ref.tensor.grad, other_ref.tensor.shape)
+                grad_for_other = CustomTensor._reduce_grad_for_broadcast(-result_ref.tensor.grad, other_ref.tensor.shape)
                 other_ref.tensor.grad.add_(grad_for_other)
         result._backward = _backward
         return result
@@ -371,12 +372,12 @@ class CustomTensor:
             if self_ref._custom_requires_grad:
                 if self_ref.tensor.grad is None:
                     self_ref._zero_grad()
-                grad_for_self = self_ref._reduce_grad_for_broadcast(result_ref.tensor.grad / other_ref.tensor, self_ref.tensor.shape)
+                grad_for_self = CustomTensor._reduce_grad_for_broadcast(result_ref.tensor.grad / other_ref.tensor, self_ref.tensor.shape)
                 self_ref.tensor.grad.add_(grad_for_self)
             if other_ref._custom_requires_grad:
                 if other_ref.tensor.grad is None:
                     other_ref._zero_grad()
-                grad_for_other = other_ref._reduce_grad_for_broadcast(-result_ref.tensor.grad * self_ref.tensor / other_ref.tensor.pow(2), other_ref.tensor.shape)
+                grad_for_other = CustomTensor._reduce_grad_for_broadcast(-result_ref.tensor.grad * self_ref.tensor / other_ref.tensor.pow(2), other_ref.tensor.shape)
                 other_ref.tensor.grad.add_(grad_for_other)
         result._backward = _backward
         return result
@@ -516,11 +517,11 @@ class CustomTensor:
                 if self_ref.tensor.grad is None: self_ref._zero_grad()
                 # Use robust broadcasting for matmul gradient
                 grad_for_self = torch.matmul(result_ref.tensor.grad, other_ref.tensor.transpose(-2, -1))
-                self_ref.tensor.grad.add_(self_ref._reduce_grad_for_broadcast(grad_for_self, self_ref.tensor.shape))
+                self_ref.tensor.grad.add_(CustomTensor._reduce_grad_for_broadcast(grad_for_self, self_ref.tensor.shape))
             if other_ref._custom_requires_grad:
                 if other_ref.tensor.grad is None: other_ref._zero_grad()
                 grad_for_other = torch.matmul(self_ref.tensor.transpose(-2, -1), result_ref.tensor.grad)
-                other_ref.tensor.grad.add_(other_ref._reduce_grad_for_broadcast(grad_for_other, other_ref.tensor.shape))
+                other_ref.tensor.grad.add_(CustomTensor._reduce_grad_for_broadcast(grad_for_other, other_ref.tensor.shape))
         result._backward = _backward
         return result
     def dot(self, other):

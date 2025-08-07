@@ -62,7 +62,7 @@ class MSE(Module):
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
 
-            grad_input = self._calculate_input_grad(
+            grad_input = MSE._calculate_input_grad(
                 input_ref.tensor,
                 target_ref.tensor,
                 weight_ref
@@ -70,9 +70,9 @@ class MSE(Module):
             input_ref.tensor.grad.add_(grad_input)
 
         return _backward
-
+    @staticmethod
     @torch.compile
-    def _calculate_input_grad(self, input_t, target_t, weight):
+    def _calculate_input_grad(input_t, target_t, weight):
         diff = input_t - target_t
         if weight is None:
             return (2 * diff) / input_t.numel()
@@ -130,7 +130,7 @@ class CrossEntropyLoss(Module):
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
 
-            grad_input = self._calculate_input_grad(
+            grad_input = CrossEntropyLoss._calculate_input_grad(
                 input_ref.tensor,
                 target_ref.tensor,
                 weight_ref
@@ -138,9 +138,9 @@ class CrossEntropyLoss(Module):
             input_ref.tensor.grad.add_(grad_input)
 
         return _backward
-
+    @staticmethod
     @torch.compile
-    def _calculate_input_grad(self, input_tensor, target_tensor,
+    def _calculate_input_grad(input_tensor, target_tensor,
                              weight):
         batch_size = input_tensor.size(0)
         num_classes = input_tensor.size(1)
@@ -203,7 +203,7 @@ class BCEWithLogitsLoss(Module):
             if input_ref.tensor.grad is None:
                 input_ref._zero_grad()
 
-            grad_input = self._calculate_input_grad(
+            grad_input = BCEWithLogitsLoss._calculate_input_grad(
                 input_ref.tensor,
                 target_ref.tensor,
                 weight_ref
@@ -213,9 +213,9 @@ class BCEWithLogitsLoss(Module):
             input_ref.tensor.grad.add_(grad_input)
 
         return _backward
-
+    @staticmethod
     @torch.compile
-    def _calculate_input_grad(self, input_tensor, target_tensor, weight):
+    def _calculate_input_grad(input_tensor, target_tensor, weight):
         sigmoid_input = torch.sigmoid(input_tensor)
 
         grad = (sigmoid_input - target_tensor) / input_tensor.numel()

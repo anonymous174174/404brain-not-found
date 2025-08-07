@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "torch>=2.7.1",
-    "rustworkx>=0.16.0"
+    "rustworkx==0.16.0"
 ]
 
 [project.urls]

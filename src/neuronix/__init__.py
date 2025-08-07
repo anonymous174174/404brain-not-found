@@ -6,7 +6,7 @@ import logging
 logging.basicConfig(
     filename='core.log',
     filemode='w',
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )

@@ -238,13 +238,13 @@ class Linear(Module):
                 if weight_ref.tensor.grad is None:
                     weight_ref._zero_grad()
                 grad_w = torch.matmul(grad_output.transpose(-2, -1), inp)
-                weight_ref.tensor.grad.add_(weight_ref._reduce_grad_for_broadcast(grad_w, weight_ref.tensor.shape))
+                weight_ref.tensor.grad.add_(CustomTensor._reduce_grad_for_broadcast(grad_w, weight_ref.tensor.shape))
 
             # Bias gradient
             if bias_ref is not None and bias_ref._custom_requires_grad:
                 if bias_ref.tensor.grad is None:
                     bias_ref._zero_grad()
-                grad_b = bias_ref._reduce_grad_for_broadcast(grad_output, bias_ref.tensor.shape)
+                grad_b = CustomTensor._reduce_grad_for_broadcast(grad_output, bias_ref.tensor.shape)
                 bias_ref.tensor.grad.add_(grad_b)
 
             # Input gradient
@@ -254,7 +254,7 @@ class Linear(Module):
                 grad_in = torch.matmul(grad_output, weight_ref.tensor)
                 if is_1d:
                     grad_in = grad_in.squeeze(0)
-                input_ref.tensor.grad.add_(input_ref._reduce_grad_for_broadcast(grad_in, input_ref.tensor.shape))
+                input_ref.tensor.grad.add_(CustomTensor._reduce_grad_for_broadcast(grad_in, input_ref.tensor.shape))
 
         return _backward
 
@@ -351,7 +351,7 @@ class Conv2d(Module):
             if input_ref._custom_requires_grad:
                 if input_ref.tensor.grad is None: input_ref._zero_grad()
                 input_ref.tensor.grad.add_(
-                    self._calculate_gradient_input_tensor(input_ref.tensor,weight_ref.tensor,grad_output)
+                    Conv2d._calculate_gradient_input_tensor(input_ref.tensor,weight_ref.tensor,grad_output,self.stride,self.padding,self.kernel_size,self.dilation,self.groups)
                 )
 
             if weight_ref._custom_requires_grad:
@@ -369,15 +369,11 @@ class Conv2d(Module):
                     )
                 )
         return _backward
-
+    @staticmethod
     @torch.compile
-    def _calculate_gradient_input_tensor(self, input_tensor,weight_tensor,grad_output):
+    def _calculate_gradient_input_tensor(input_tensor,weight_tensor,grad_output,stride,padding,kernel_size,dilation,groups):
         h_in, w_in = input_tensor.shape[2], input_tensor.shape[3]
         h_out, w_out = grad_output.shape[2], grad_output.shape[3]
-        stride = self.stride
-        padding = self.padding
-        kernel_size = self.kernel_size
-        dilation = self.dilation
         # The formula relating input size to output size in a transposed convolution is:
         # InputSize = (OutputSize - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
         # We rearrange this to solve for the required output_padding.
@@ -392,12 +388,12 @@ class Conv2d(Module):
             padding=padding,
             output_padding=output_padding,
             dilation=dilation,
-            groups=self.groups
+            groups=groups
         )
         return grad_input
-
+    @staticmethod
     @torch.compile
-    def _calculate_gradient_weight_tensor_loop(self,input_tensor,grad_output):
+    def _calculate_gradient_weight_tensor_loop(in_channels,groups,out_channels,input_tensor,grad_output,stride,padding,dilation):
         #The gradient w.r.t. the weights is a convolution
         # of the input (X) and the output gradient (grad_output).
         # For grouped convolutions, we must perform this calculation for each group separately.
@@ -419,9 +415,9 @@ class Conv2d(Module):
         # hence when calling conv2d we need to switch stride and dilation
         # and also transpose the dimensions of batch and channel as for derivative with respect to weight the channels are fixed in the summation
 
-        in_channels = self.in_channels
-        groups = self.groups
-        out_channels = self.out_channels
+        # in_channels = self.in_channels
+        # groups = self.groups
+        # out_channels = self.out_channels
         in_channels_per_group = in_channels // groups
         out_channels_per_group = out_channels // groups
         grad_W_groups = []
@@ -450,9 +446,9 @@ class Conv2d(Module):
             grad_W_g_permuted = F.conv2d(
                 X_g_permuted,
                 grad_output_g_permuted,
-                stride=self.dilation,
-                padding=self.padding,
-                dilation=self.stride,
+                stride=dilation,
+                padding=padding,
+                dilation=stride,
                 groups=1 # The group calculation is handled by our loop, so this is a standard conv.
             )
 
@@ -504,10 +500,11 @@ class BatchNorm_Nd(Module):
         if input_shape not in self._shape_cache:
             self._shape_cache[input_shape] = (1,) + (input_shape[1],) + (1,) * (len(input_shape) - 2)
         return self._shape_cache[input_shape]
-
+    
+    @staticmethod
     @torch.compile
-    def _compute_stats(self, x: torch.Tensor):
-        reduce_dims = tuple(i for i in range(x.dim()) if i != self._channel_axis)
+    def _compute_stats(_channel_axis, x: torch.Tensor):
+        reduce_dims = tuple(i for i in range(x.dim()) if i != _channel_axis)
 
         mean = x.mean(dim=reduce_dims, keepdim=False)
         var = x.var(dim=reduce_dims, keepdim=False, unbiased=False)
@@ -540,7 +537,8 @@ class BatchNorm_Nd(Module):
             if input_ref._custom_requires_grad:
                 if input_ref.tensor.grad is None:
                     input_ref._zero_grad()
-                grad_input = self.batchnorm_gradient_for_input_tensor(
+                grad_input = BatchNorm_Nd.batchnorm_gradient_for_input_tensor(
+                    _channel_axis=self._channel_axis,
                     result_gradient=result_gradient,
                     input_tensor=torch_input_tensor,
                     weight_shaped=weight_shaped,
@@ -561,7 +559,7 @@ class BatchNorm_Nd(Module):
         bias_shaped = self.bias.tensor.view(shape_to)
 
         if self.training:
-            batch_mean, batch_var = self._compute_stats(torch_input_tensor)
+            batch_mean, batch_var = BatchNorm_Nd._compute_stats(self._channel_axis,torch_input_tensor)
             total_elements = torch_input_tensor.numel() // torch_input_tensor.shape[self._channel_axis]
             unbiased_var = batch_var * total_elements / (total_elements - 1) if total_elements > 1 else batch_var
 
@@ -605,11 +603,11 @@ class BatchNorm_Nd(Module):
         )
 
         return result
-
+    @staticmethod
     @torch.compile
-    def batchnorm_gradient_for_input_tensor(self, *, result_gradient, input_tensor, weight_shaped,
+    def batchnorm_gradient_for_input_tensor(_channel_axis, *, result_gradient, input_tensor, weight_shaped,
                                           input_minus_mean, inv_std, total_elements):
-        reduce_dims = tuple(i for i in range(input_tensor.dim()) if i != self._channel_axis)
+        reduce_dims = tuple(i for i in range(input_tensor.dim()) if i != _channel_axis)
 
         outer_term = weight_shaped * inv_std
         term_1 = result_gradient
@@ -726,7 +724,7 @@ class AvgPool2d(Module):
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
             input = input_ref.tensor
-            grad_input = self._calculate_gradient_input_tensor(grad_output,input)
+            grad_input = AvgPool2d._calculate_gradient_input_tensor(grad_output,input,self.kernel_size,self.stride,self.padding)
             input_ref.tensor.grad.add_(grad_input)
 
         return _backward
@@ -755,15 +753,13 @@ class AvgPool2d(Module):
         result._backward = self.create_backward(input_tensor, result)
 
         return result
-
+    @staticmethod
     @torch.compile
-    def _calculate_gradient_input_tensor(self,grad_output,input):
+    def _calculate_gradient_input_tensor(grad_output,input,kernel_size,stride,padding):
 
             h_in, w_in = input.shape[2], input.shape[3]
             h_out, w_out = grad_output.shape[2], grad_output.shape[3]
-            kernel_size=self.kernel_size
-            stride=self.stride
-            padding=self.padding
+
 
             # The formula relating input size to output size in a transposed convolution is:
             # InputSize = (OutputSize - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
@@ -930,8 +926,9 @@ class GeLu(Module):
         result._backward = self._create_backward(input_tensor, result)
         return result
 
-    @torch.compile
+    
     @staticmethod
+    @torch.compile
     def gelu_derivative(x: torch.Tensor, grad_output: torch.Tensor, approximate: str) -> torch.Tensor:
         if approximate == "none":
             sqrt_2_pi = 2.5066282749176025  # torch.tensor(2 * torch.pi).sqrt()
@@ -1078,7 +1075,7 @@ class Swish(Module):
           B_requires_grad = B_ref._custom_requires_grad
           if not input_requires_grad and not B_requires_grad:
               return
-          grad_input, grad_B = self._calculate_gradients(
+          grad_input, grad_B = Swish._calculate_gradients(
               input_tensor=input_ref.tensor,
               result=result_ref.tensor,
               output_tensor=output_tensor,
@@ -1115,9 +1112,9 @@ class Swish(Module):
           self.graph.add_edge(self.B._node_id, result._node_id)
         result._backward = self._create_backward(input_tensor, result, output_tensor)
         return result
-
+    @staticmethod
     @torch.compile
-    def _calculate_gradients(self, input_tensor, result, output_tensor, B_tensor):
+    def _calculate_gradients(input_tensor, result, output_tensor, B_tensor):
         grad_output =result.grad
         sig_B_x = output_tensor / input_tensor
         common = sig_B_x * (1 - sig_B_x) * grad_output
