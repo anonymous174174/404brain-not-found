@@ -3,7 +3,7 @@ import weakref
 import torch
 import torch.nn.functional as F
 from .custom_tensor import CustomTensor
-from neuronix import device, dtype
+from .config import device, dtype
 # TODO Lone MSE , MSE with softmax, MSE with sigmoid, cross entropy with softmax, binary cross entropy with sigmoid
 class MSE(Module):
     __slots__ = ('graph','__weakref__')
