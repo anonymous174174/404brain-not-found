@@ -3,13 +3,13 @@ from warnings import warn
 import logging
 
 # disabling AutoGrad for the entire module
-logging.basicConfig(
-    filename='core.log',
-    filemode='w',
-    level=logging.WARNING,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# logging.basicConfig(
+#     filename='core.log',
+#     filemode='w',
+#     level=logging.WARNING,
+#     format='%(asctime)s [%(levelname)s] %(message)s',
+#     datefmt='%Y-%m-%d %H:%M:%S'
+# )
 #torch.autograd.set_grad_enabled(False)
 # datatype of tensors
 dtype = torch.float32 
@@ -24,11 +24,12 @@ if not RUN_ON_GPU and not RUN_ON_MPS:
         import torch_xla.core.xla_model as xm
         RUN_ON_TPU = xm.xla_device() is not None # Check if an XLA device is actually available
     except ImportError:
+        pass
         # torch_xla is not installed, so RUN_ON_TPU remains False
-        logging.info("torch_xla is not installed. Skipping TPU device check.")
+        #logging.info("torch_xla is not installed. Skipping TPU device check.")
     except Exception as e:
         # Catch other potential errors during XLA device initialization
-        logging.warning(f"Error checking for XLA device: {e}. Skipping TPU device check.")
+        #logging.warning(f"Error checking for XLA device: {e}. Skipping TPU device check.")
         RUN_ON_TPU = False
 
 RUN_ON_CPU = not RUN_ON_GPU and not RUN_ON_MPS and not RUN_ON_TPU
@@ -45,7 +46,7 @@ else:
     device = torch.device("cpu")
 
 device_summary = f"Running on: {'GPU' if RUN_ON_GPU else 'MPS' if RUN_ON_MPS else 'TPU' if RUN_ON_TPU else 'CPU'}"
-logging.info(device_summary)
+#logging.info(device_summary)
 
 __all__ = [
     "custom_tensor",
