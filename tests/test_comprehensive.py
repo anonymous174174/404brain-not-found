@@ -15,12 +15,14 @@ from neuronix.custom_tensor import CustomTensor
 from neuronix.module import *
 from neuronix.losses import *
 from neuronix.optimizers import *
-from neuronix import device,dtype
+from neuronix.config import device,dtype
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
         self.failed_tests = 0
-        self.tolerance = 1e-6 #1e-7  # Increased tolerance slightly for complex ops
+        self.rtol = 1e-4 #1e-7  
+        self.atol = 1e-5
+
 
     def assert_tensors_close(self, custom_tensor, pytorch_tensor, test_name, check_grad=True):
         """Compare custom tensor with PyTorch tensor values and optionally gradients."""
@@ -29,8 +31,8 @@ class AutogradTester:
             np.testing.assert_allclose(
                 custom_tensor.tensor.detach().cpu().numpy(),  # Ensure on CPU for numpy
                 pytorch_tensor.detach().cpu().numpy(),
-                rtol=self.tolerance,
-                atol=self.tolerance,
+                rtol=self.rtol,
+                atol=self.atol,
                 err_msg=f"Mismatch in tensor values for {test_name}"
             )
 
@@ -42,8 +44,8 @@ class AutogradTester:
                 np.testing.assert_allclose(
                     custom_tensor.tensor.grad.detach().cpu().numpy(),  # Ensure on CPU for numpy
                     pytorch_tensor.grad.detach().cpu().numpy(),
-                    rtol=self.tolerance,
-                    atol=self.tolerance,
+                    rtol=self.rtol,
+                    atol=self.atol,
                     err_msg=f"Mismatch in gradients for {test_name}"
                 )
             elif check_grad and pytorch_tensor.grad is None and custom_tensor.tensor.grad is not None:

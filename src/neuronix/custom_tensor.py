@@ -691,7 +691,7 @@ class CustomTensor:
         if isinstance(weightage_tensor, numbers.Number):
             self.tensor.grad = torch.full_like(self.tensor, fill_value=weightage_tensor)
         elif isinstance(weightage_tensor, torch.Tensor):
-            self.tensor.grad = weightage_tensor.to(self.tensor.device)#.clone()
+            self.tensor.grad = weightage_tensor.to(device=self.tensor.device,dtype=self.tensor.dtype)#.clone()
 
         nodes_to_process = graph.reverse_toposort_from_tensor(self._node_id)
 

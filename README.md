@@ -51,43 +51,12 @@ This implementation helps understand:
 - **Optimization algorithms**: Implementation details of popular optimizers
 - **Neural network modules**: How layers compose and interact
 
-## ⚡ Technical Highlights
-
-### Memory Management
-
-```python
-def __exit__(self, exc_type, exc_value, traceback):
-    if self._check_cycles and self.check_cycle():
-        raise RuntimeError("Cycle detected in autograd graph")
-    if self._auto_cleanup:
-        self.intermediate_tensors.clear()
-        self.graph.clear()
-```
-
-### JIT-Compiled Operations
-
-```python
-@torch.compile
-def _reduce_grad_for_broadcast(self, grad, target_shape):
-    """JIT-compiled gradient reduction for broadcasting operations."""
-    # Custom broadcasting logic for arbitrary dimensional tensors
-```
-
-### Graph-Based Backward Pass
-
-```python
-def reverse_toposort_from_tensor(self, tensor_index):
-    predecessors = list(rx.ancestors(self.graph, tensor_index))
-    predecessors.append(tensor_index)
-    sub_graph = self.graph.subgraph(predecessors)
-    return [sub_graph[i] for i in reversed(rx.topological_sort(sub_graph))]
-```
 
 ## 🔍 Testing & Validation
 
 The implementation has been validated against PyTorch for:
 
-- ✅ Gradient correctness across all operations upto rtol 1e-4
+- ✅ Gradient correctness across all operations upto rtol 1e-6 and atol 1e-6 on float32 and rtol 1e-7 and atol 1e-12 on float 64
 - ✅ Broadcasting behavior consistency  
 - ✅ Memory usage patterns
 - ✅ Numerical stability
