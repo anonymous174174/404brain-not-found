@@ -8,7 +8,7 @@ from neuronix.custom_tensor import CustomTensor
 from neuronix.module import *
 from neuronix.losses import *
 from neuronix.optimizers import *
-from neuronix import device,dtype
+from neuronix.config import device,dtype
 import time
 
 """Calculations for CNN Architecture
