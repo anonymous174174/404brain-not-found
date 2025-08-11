@@ -1,12 +1,12 @@
 # Neuronix 🧠
 
-A custom deep learning framework built from first principles in Python for Learning and research purposes. This project implements a complete neural network library with a custom automatic differentiation engine, trying to deconstruct the inner workings of modern ML frameworks like PyTorch.
+A custom deep learning framework built from first principles in Python for Learning purposes. This project implements a complete neural network library with a custom automatic differentiation engine, trying to deconstruct the inner workings of modern ML frameworks like PyTorch.
 
 ## ✨ What This Is
 
 This is a learning-focused implementation that recreates core deep learning functionality from the ground up. It's designed to help understand how autograd engines, neural network modules, and optimization algorithms actually work under the hood.
 
-**⚠️ Disclaimer:** Neuronix is for learning and research purposes only. For production applications, use established frameworks like PyTorch, TensorFlow, or JAX.
+**⚠️ Disclaimer:** Neuronix is for learning purposes only. For production applications, use established frameworks like PyTorch, TensorFlow, or JAX.
 
 ## 🚀 Features
 
@@ -76,7 +76,7 @@ You can verify the same by running /tests/test_comprehensive.py
 
 ## 🤝 Contributing
 
-This is a learning project Contributions, bug reports are welcome. Areas for exploration for future:
+This is a learning project. Contributions, bug reports are welcome. Areas for exploration for future:
 
 - [ ] Higher-order derivatives
 - [ ] Additional Modules
