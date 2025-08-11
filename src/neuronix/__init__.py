@@ -4,6 +4,7 @@ __all__ = [
     "module",
     "autograd_graph",
     "optimizers",
+    "lr_scheduler",
     "__version__"
 ]
 
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
         autograd_graph,
         module,
         optimizers,
-        losses
+        losses,
+        lr_scheduler
     )
 __version__ = "0.0.1"
