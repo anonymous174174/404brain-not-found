@@ -1,4 +1,4 @@
-## this was a failure because of custom class not being able to be pickled properly due to weakref proxies and god knows what for multiprocessing for torch dataloader must convert the tensors to custom tensors after receiving the torch tensors
+## this was a failure because of custom class not being able to be pickled properly due to weakref proxies and god knows what for multiprocessing for torch dataloader hence must convert the tensors to custom tensors after receiving the torch tensors
 # import torch
 # import time
 # from typing import Callable, Optional, Union, Any
