@@ -2976,7 +2976,7 @@ class AutogradTester:
         self.test_optimizer_edge_cases()
 
         print("\n" + "="*50)
-        print("RUNNING LEARNING RATE SCHEDULER TESTS")
+        print("Running All learning rate scheduler tests")
         print("="*50)
         
         self.test_step_lr_scheduler()
