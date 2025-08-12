@@ -312,6 +312,7 @@ class Conv2d(Module):
             bias = self.bias.tensor if self.bias else None,
             stride = self.stride,
             padding = self.padding,
+            dilation = self.dilation,
             groups=self.groups
         )
         if not self.training:
