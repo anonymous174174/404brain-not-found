@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 import weakref
 import numbers
-import math
 from .config import device, dtype
 class CustomTensor:
     """
