@@ -198,3 +198,5 @@ temp.py
 1.py
 2.py
 .__pycache__
+experiments/
+experiments.tar.gz
