@@ -138,6 +138,7 @@ class CustomTensor:
             self.tensor.add_(other)
         elif isinstance(other,CustomTensor):
             self.tensor.add_(other.tensor)
+        return self
     def _add_scalar(self, scalar):
         result_tensor = torch.add(self.tensor, scalar)
         if not self._custom_requires_grad:
@@ -191,6 +192,7 @@ class CustomTensor:
             self.tensor.mul_(other)
         elif isinstance(other,CustomTensor):
             self.tensor.mul_(other.tensor)
+        return self
     def _mul_scalar(self, scalar):
         result_tensor = torch.mul(self.tensor, scalar)
         if not self._custom_requires_grad:
@@ -248,6 +250,7 @@ class CustomTensor:
             self.tensor.sub_(other)
         elif isinstance(other,CustomTensor):
             self.tensor.sub_(other.tensor)
+        return self
 
     def _rsub_scalar(self, scalar):
         result_tensor = torch.sub(scalar, self.tensor)
@@ -331,6 +334,7 @@ class CustomTensor:
             self.tensor.div_(other)
         elif isinstance(other,CustomTensor):
             self.tensor.div_(other.tensor)
+        return self
     def _div_scalar(self, scalar):
         result_tensor = torch.div(self.tensor, scalar)
         if not self._custom_requires_grad:
@@ -401,6 +405,7 @@ class CustomTensor:
         return result
     def __ipow__(self,other):
         self.tensor.pow_(other)
+        return self
     def __pow__(self,other):
       if isinstance(other, numbers.Number):
           return self.pow(other)

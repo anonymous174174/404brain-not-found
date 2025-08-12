@@ -872,7 +872,7 @@ class Elu(Module):
                 input_ref._zero_grad()
             grad_output = result_ref.tensor.grad
             grad_input = grad_output.clone()
-            mask_neg = (input_ref.tensor.data <= 0)
+            mask_neg = (input_ref.tensor <= 0)
             grad_input[mask_neg] *= (self.alpha + output_tensor[mask_neg])
             input_ref.tensor.grad.add_(grad_input)
 
@@ -970,7 +970,7 @@ class Sigmoid(Module):
         return _backward
 
     def forward(self, input_tensor):
-        output_tensor = F.sigmoid(input_tensor.tensor)
+        output_tensor = torch.sigmoid(input_tensor.tensor)
         if not self.training:
             return CustomTensor(output_tensor, due_to_operation=True)
 
@@ -1005,7 +1005,7 @@ class Tanh(Module):
         return _backward
 
     def forward(self, input_tensor):
-        output_tensor = F.tanh(input_tensor.tensor)
+        output_tensor = torch.tanh(input_tensor.tensor)
         if not self.training:
             return CustomTensor(output_tensor, due_to_operation=True)
 

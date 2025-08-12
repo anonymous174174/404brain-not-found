@@ -17,7 +17,7 @@ class Optimizer:
         raise NotImplementedError
 
     def clear(self):
-        self.param_group = []
+        self.param_groups = []
         self.state.clear()
 
     def zero_grad(self):
