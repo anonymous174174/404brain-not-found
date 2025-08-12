@@ -15,12 +15,14 @@ from neuronix.custom_tensor import CustomTensor
 from neuronix.module import *
 from neuronix.losses import *
 from neuronix.optimizers import *
+from neuronix.lr_scheduler import *
 from neuronix.config import device,dtype
+
 class AutogradTester:
     def __init__(self):
         self.passed_tests = 0
         self.failed_tests = 0
-        self.rtol = 1e-4 #1e-7  
+        self.rtol = 1e-4 #1e-7
         self.atol = 1e-5
 
 
@@ -57,7 +59,26 @@ class AutogradTester:
         except Exception as e:
             print(f"✗ {test_name}: {str(e)}")
             self.failed_tests += 1
-
+    def assert_close_values(self, custom_val, expected_val, test_name):
+        """Helper method to test scalar values or lists"""
+        try:
+            if isinstance(custom_val, list) and isinstance(expected_val, list):
+                np.testing.assert_allclose(
+                    custom_val, expected_val,
+                    rtol=self.rtol, atol=self.atol,
+                    err_msg=f"Mismatch in values for {test_name}"
+                )
+            else:
+                np.testing.assert_allclose(
+                    custom_val, expected_val,
+                    rtol=self.rtol, atol=self.atol,
+                    err_msg=f"Mismatch in value for {test_name}"
+                )
+            print(f"✓ {test_name}")
+            self.passed_tests += 1
+        except Exception as e:
+            print(f"✗ {test_name}: {str(e)}")
+            self.failed_tests += 1
     def test_basic_operations(self):
         """Test basic arithmetic operations"""
         print("\n=== Testing Basic Operations ===")
@@ -2484,6 +2505,330 @@ class AutogradTester:
                 print(f"✗ AdamW Tiny Learning Rate: Change too large ({change})")
                 self.failed_tests += 1
 
+    def test_step_lr_scheduler(self):
+        """Test StepLR scheduler comprehensively"""
+        print("\n=== Testing StepLR Scheduler ===")
+        
+        # Create test parameters and optimizer
+        with AutogradGraph() as graph:
+            param1 = CustomTensor([1.0, 2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            param2 = CustomTensor([3.0, 4.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param1, param2], lr=0.1)
+            
+            # Test basic initialization
+            scheduler = StepLR(optimizer, step_size=3, gamma=0.5)
+            self.assert_close_values(scheduler.step_size, 3, "StepLR - step_size initialization")
+            self.assert_close_values(scheduler.gamma, 0.5, "StepLR - gamma initialization")
+            self.assert_close_values(scheduler.base_lrs, [0.1], "StepLR - base_lrs initialization")
+            self.assert_close_values(scheduler.last_epoch, 0, "StepLR - last_epoch after init")
+            
+            # Test learning rate before step_size reached
+            for epoch in range(1, 3):
+                scheduler.step()
+                current_lrs = [group['lr'] for group in optimizer.param_groups]
+                expected_lrs = [0.1]  # Should remain unchanged
+                self.assert_close_values(current_lrs, expected_lrs, f"StepLR - lr unchanged at epoch {epoch}")
+            
+            # Test learning rate at step_size (epoch 3)
+            scheduler.step()
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.05]  # 0.1 * 0.5^1
+            self.assert_close_values(current_lrs, expected_lrs, "StepLR - lr reduced at step_size")
+            
+            # Test learning rate at 2 * step_size (epoch 6)
+            for _ in range(3):
+                scheduler.step()
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.025]  # 0.1 * 0.5^2
+            self.assert_close_values(current_lrs, expected_lrs, "StepLR - lr reduced at 2*step_size")
+            
+        # Test with different gamma values
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=1.0)
+            scheduler = StepLR(optimizer, step_size=2, gamma=0.1)
+            
+            # Step to epoch 2
+            scheduler.step()
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.1  # 1.0 * 0.1^1
+            self.assert_close_values(current_lr, expected_lr, "StepLR - different gamma test")
+
+    def test_cosine_annealing_lr_scheduler(self):
+        """Test CosineAnnealingLR scheduler comprehensively"""
+        print("\n=== Testing CosineAnnealingLR Scheduler ===")
+        
+        # Create test parameters and optimizer
+        with AutogradGraph() as graph:
+            param1 = CustomTensor([1.0, 2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            param2 = CustomTensor([3.0, 4.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param1, param2], lr=0.1)
+            
+            # Test basic initialization
+            scheduler = CosineAnnealingLR(optimizer, T_max=10, eta_min=0.01)
+            self.assert_close_values(scheduler.T_max, 10, "CosineAnnealingLR - T_max initialization")
+            self.assert_close_values(scheduler.eta_min, 0.01, "CosineAnnealingLR - eta_min initialization")
+            self.assert_close_values(scheduler.base_lrs, [0.1], "CosineAnnealingLR - base_lrs initialization")
+            
+            # Test at epoch 0 (should be at max lr)
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.1]  # Should be base_lr
+            self.assert_close_values(current_lrs, expected_lrs, "CosineAnnealingLR - lr at epoch 0")
+            
+            # Test at T_max/2 (should be mid-way, not minimum)
+            for _ in range(5):
+                scheduler.step()
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.055]  
+            self.assert_close_values(current_lrs, expected_lrs, "CosineAnnealingLR - lr at T_max/2 (minimum)")
+            
+            # # Test at T_max (should be at minimum, eta_min)
+            for _ in range(5):
+                scheduler.step()
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.01] 
+            self.assert_close_values(current_lrs, expected_lrs, "CosineAnnealingLR - lr at T_max (back to max)")
+            
+        # Test specific cosine values
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=1.0)
+            scheduler = CosineAnnealingLR(optimizer, T_max=4, eta_min=0.0)
+            
+            # Test at T_max/4 (45 degrees)
+            scheduler.step()  # epoch 1
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.0 + (1.0 - 0.0) * (1 + math.cos(math.pi * 1 / 4)) / 2
+            self.assert_close_values(current_lr, expected_lr, "CosineAnnealingLR - lr at T_max/4")
+            
+        # Test error handling for invalid T_max
+        try:
+            with AutogradGraph() as graph:
+                param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+                optimizer = SGD([param], lr=0.1)
+                scheduler = CosineAnnealingLR(optimizer, T_max=0)  # Should raise ValueError
+            print("✗ CosineAnnealingLR - T_max validation: Should have raised ValueError")
+            self.failed_tests += 1
+        except ValueError:
+            print("✓ CosineAnnealingLR - T_max validation")
+            self.passed_tests += 1
+
+    def test_reduce_lr_on_plateau_scheduler(self):
+        """Test ReduceLROnPlateau scheduler comprehensively"""
+        print("\n=== Testing ReduceLROnPlateau Scheduler ===")
+        
+        # Create test parameters and optimizer
+        with AutogradGraph() as graph:
+            param1 = CustomTensor([1.0, 2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            param2 = CustomTensor([3.0, 4.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param1, param2], lr=0.1)
+            
+            # Test basic initialization (min mode)
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+            self.assert_close_values(scheduler.factor, 0.5, "ReduceLROnPlateau - factor initialization")
+            self.assert_close_values(scheduler.patience, 3, "ReduceLROnPlateau - patience initialization")
+            self.assert_close_values(scheduler.best, float('inf'), "ReduceLROnPlateau - best initialization (min mode)")
+            self.assert_close_values(scheduler.num_bad_epochs, 0, "ReduceLROnPlateau - num_bad_epochs initialization")
+            
+            # Test improving metrics (should not reduce LR)
+            scheduler.step(5.0)  # First metric sets best
+            scheduler.step(4.0)  # Improving
+            scheduler.step(3.0)  # Still improving
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.1]  # Should remain unchanged
+            self.assert_close_values(current_lrs, expected_lrs, "ReduceLROnPlateau - lr unchanged with improving metrics")
+            
+            # Test plateau (should reduce LR after patience epochs)
+            scheduler.step(3.5)  # Bad epoch 1
+            scheduler.step(3.2)  # Bad epoch 2  
+            scheduler.step(3.1)  # Bad epoch 3
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.1]  # Should still be unchanged (patience not exceeded)
+            self.assert_close_values(current_lrs, expected_lrs, "ReduceLROnPlateau - lr unchanged before patience exceeded")
+            
+            scheduler.step(3.3)  # Bad epoch 4, should trigger reduction
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.05]  # Should be reduced by factor
+            self.assert_close_values(current_lrs, expected_lrs, "ReduceLROnPlateau - lr reduced after patience exceeded")
+            
+        # Test max mode
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=0.1)
+            scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2)
+            
+            self.assert_close_values(scheduler.best, float('-inf'), "ReduceLROnPlateau - best initialization (max mode)")
+            
+            # Test with max mode logic
+            scheduler.step(5.0)  # Sets best to 5.0
+            scheduler.step(4.0)  # Bad epoch (decreasing is bad in max mode)
+            scheduler.step(3.0)  # Bad epoch 2
+            scheduler.step(2.0)  # Bad epoch 3, should trigger reduction
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.05
+            self.assert_close_values(current_lr, expected_lr, "ReduceLROnPlateau - lr reduced in max mode")
+            
+        # Test min_lr constraint
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=0.1)
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=1, min_lr=0.01)
+            
+            # Trigger multiple reductions
+            scheduler.step(5.0)  # Set best
+            scheduler.step(6.0)  # Bad epoch 1
+            scheduler.step(7.0)  # Trigger first reduction: 0.1 -> 0.01
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.01  # Should be clamped to min_lr
+            self.assert_close_values(current_lr, expected_lr, "ReduceLROnPlateau - lr clamped to min_lr")
+            
+            # Try to trigger another reduction (should stay at min_lr)
+            scheduler.step(8.0)  # Bad epoch
+            scheduler.step(9.0)  # Should try to reduce but stay at min_lr
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.01  # Should remain at min_lr
+            self.assert_close_values(current_lr, expected_lr, "ReduceLROnPlateau - lr stays at min_lr")
+            
+        # Test cooldown functionality
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=0.1)
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1, cooldown=2)
+            
+            scheduler.step(5.0)  # Set best
+            scheduler.step(6.0)  # Bad epoch 1
+            scheduler.step(7.0)  # Trigger reduction and start cooldown
+            
+            # During cooldown, bad epochs should be reset
+            scheduler.step(8.0)  # Should not count as bad epoch due to cooldown
+            scheduler.step(9.0)  # Should not count as bad epoch due to cooldown
+            scheduler.step(10.0)  # Cooldown over, this counts as bad epoch 1
+            scheduler.step(11.0)  # Bad epoch 2, but patience is 1, so should trigger
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.025  # 0.05 * 0.5
+            self.assert_close_values(current_lr, expected_lr, "ReduceLROnPlateau - cooldown functionality")
+            
+        # Test threshold modes
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=0.1)
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', threshold=0.1, threshold_mode='abs', patience=1)
+            
+            scheduler.step(1.0)   # Set best to 1.0
+            scheduler.step(0.95)  # Improvement of 0.05 < threshold 0.1, should be considered bad
+            scheduler.step(0.94)  # Should trigger reduction
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            self.assert_close_values(scheduler.num_bad_epochs, 0, "ReduceLROnPlateau - threshold mode abs test")
+            
+        # Test error handling for invalid factor
+        try:
+            with AutogradGraph() as graph:
+                param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+                optimizer = SGD([param], lr=0.1)
+                scheduler = ReduceLROnPlateau(optimizer, factor=1.5)  # Should raise ValueError
+            print("✗ ReduceLROnPlateau - factor validation: Should have raised ValueError")
+            self.failed_tests += 1
+        except ValueError:
+            print("✓ ReduceLROnPlateau - factor validation")
+            self.passed_tests += 1
+
+    def test_scheduler_integration(self):
+        """Test schedulers working with different optimizers and multiple param groups"""
+        print("\n=== Testing Scheduler Integration ===")
+        
+        # Test multiple parameter groups with different base learning rates
+        with AutogradGraph() as graph:
+            param1 = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            param2 = CustomTensor([2.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            
+            # Create optimizer with multiple groups
+            optimizer = SGD([param1], lr=0.1)
+            optimizer.param_groups.append({'params': [param2], 'lr': 0.2, 'weight_decay': None})
+            
+            scheduler = StepLR(optimizer, step_size=2, gamma=0.5)
+            
+            # Check initial base_lrs captures both groups
+            expected_base_lrs = [0.1, 0.2]
+            self.assert_close_values(scheduler.base_lrs, expected_base_lrs, "Multi-group - base_lrs capture")
+            
+            # Step and check both groups are updated
+            scheduler.step()
+            scheduler.step()  # Should trigger reduction
+            
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            expected_lrs = [0.05, 0.1]  # Both reduced by factor 0.5
+            self.assert_close_values(current_lrs, expected_lrs, "Multi-group - lr updates")
+
+    def test_scheduler_edge_cases(self):
+        """Test edge cases and boundary conditions"""
+        print("\n=== Testing Scheduler Edge Cases ===")
+        
+        # Test StepLR with step_size=1
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=1.0)
+            scheduler = StepLR(optimizer, step_size=1, gamma=0.5)
+            
+            # Should reduce every epoch
+            for i in range(3):
+                scheduler.step()
+                expected_lr = 1.0 * (0.5 ** (i + 1))
+                current_lr = optimizer.param_groups[0]['lr']
+                self.assert_close_values(current_lr, expected_lr, f"StepLR step_size=1 - epoch {i+1}")
+                
+        # Test CosineAnnealingLR with T_max=1
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=1.0)
+            scheduler = CosineAnnealingLR(optimizer, T_max=1, eta_min=0.0)
+            
+            # Should go from max to min in one step
+            scheduler.step()  # epoch 1
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.0  # Should be at eta_min
+            self.assert_close_values(current_lr, expected_lr, "CosineAnnealingLR T_max=1")
+            
+        # Test ReduceLROnPlateau with patience=0
+        with AutogradGraph() as graph:
+            param = CustomTensor([1.0], _custom_requires_grad=True, graph=graph, is_leaf=True)
+            optimizer = SGD([param], lr=0.1)
+            scheduler = ReduceLROnPlateau(optimizer, patience=0, factor=0.5)
+            
+            scheduler.step(5.0)  # Set best
+            scheduler.step(6.0)  # Should immediately trigger reduction
+            
+            current_lr = optimizer.param_groups[0]['lr']
+            expected_lr = 0.05
+            self.assert_close_values(current_lr, expected_lr, "ReduceLROnPlateau patience=0")
+
+    def run_scheduler_tests(self):
+        """Run all scheduler tests"""
+        print("\n" + "="*50)
+        print("RUNNING LEARNING RATE SCHEDULER TESTS")
+        print("="*50)
+        
+        self.test_step_lr_scheduler()
+        self.test_cosine_annealing_lr_scheduler()
+        self.test_reduce_lr_on_plateau_scheduler()
+        self.test_scheduler_integration()
+        self.test_scheduler_edge_cases()
+        
+        print(f"\n=== SCHEDULER TEST SUMMARY ===")
+        print(f"Passed: {self.passed_tests}")
+        print(f"Failed: {self.failed_tests}")
+        print(f"Total: {self.passed_tests + self.failed_tests}")
+        
+        if self.failed_tests == 0:
+            print("🎉 All scheduler tests passed!")
+        else:
+            print(f"⚠️  {self.failed_tests} scheduler tests failed")
+
     def test_all_optimizers(self):
         """Run all optimizer tests"""
         print("\n" + "="*60)
@@ -2629,6 +2974,16 @@ class AutogradTester:
         self.test_adamw_optimizer()
         self.test_lion_optimizer()
         self.test_optimizer_edge_cases()
+
+        print("\n" + "="*50)
+        print("RUNNING LEARNING RATE SCHEDULER TESTS")
+        print("="*50)
+        
+        self.test_step_lr_scheduler()
+        self.test_cosine_annealing_lr_scheduler()
+        self.test_reduce_lr_on_plateau_scheduler()
+        self.test_scheduler_integration()
+        self.test_scheduler_edge_cases()
 
 
 

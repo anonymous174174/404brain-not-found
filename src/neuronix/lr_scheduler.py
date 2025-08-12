@@ -1,6 +1,5 @@
 import math
 from .optimizers import Optimizer
-# TODO Test the LR Schedulers
 class _LRScheduler:
     """
     Base class for all learning rate schedulers.
@@ -15,10 +14,8 @@ class _LRScheduler:
         self.optimizer = optimizer
         self.last_epoch = last_epoch
 
-        # Store the initial learning rates for all parameter groups
         self.base_lrs = [group['lr'] for group in optimizer.param_groups]
 
-        # This ensures optimizer LRs match the schedule at creation (avoids off-by-one bug)
         self.step()
 
     def get_lr(self):
@@ -32,7 +29,6 @@ class _LRScheduler:
         Advances the scheduler by one epoch and updates learning rates.
         """
         if self.last_epoch == -1:
-            # First call at initialization, set epoch to 0
             self.last_epoch = 0
         else:
             self.last_epoch += 1
@@ -93,8 +89,8 @@ class ReduceLROnPlateau:
                  'min_lr', 'cooldown', 'cooldown_counter', 'best', 'num_bad_epochs', 'mode_worse')
 
     def __init__(self, optimizer, mode = 'min', factor = 0.1, patience = 10,
-                 threshold: float = 1e-4, threshold_mode: str = 'rel', min_lr: float = 0.0,
-                 cooldown: int = 0):
+                 threshold = 1e-4, threshold_mode = 'rel', min_lr = 0.0,
+                 cooldown = 0):
         if not isinstance(optimizer, Optimizer) or not hasattr(optimizer, 'param_groups'):
             raise TypeError(f"{type(optimizer).__name__} is not a valid Optimizer")
 
@@ -129,7 +125,7 @@ class ReduceLROnPlateau:
 
         if self.cooldown_counter > 0:
             self.cooldown_counter -= 1
-            self.num_bad_epochs = 0  # Ignore bad epochs during cooldown
+            self.num_bad_epochs = 0  
 
         if self.num_bad_epochs > self.patience:
             self._reduce_lr()
@@ -140,7 +136,7 @@ class ReduceLROnPlateau:
         for group in self.optimizer.param_groups:
             old_lr = group['lr']
             new_lr = max(old_lr * self.factor, self.min_lr)
-            if new_lr < old_lr - 1e-12:  # Avoid floating point noise
+            if new_lr < old_lr - 1e-12:  
                 group['lr'] = new_lr
 
     def _is_better(self, current, best):
