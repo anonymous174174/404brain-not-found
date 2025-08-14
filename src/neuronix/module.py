@@ -145,6 +145,24 @@ class Module:
     def forward(self, *args, **kwargs):
         raise NotImplementedError("Subclasses of Module must implement a forward method.")
 
+class Sequential(Module):
+    """
+    A sequential container for chaining modules together.
+    Modules are added in the order they are passed to the constructor. The output
+    of each module is passed as the input to the next.
+    """
+    __slots__ = ()  
+    def __init__(self, *args):
+        super().__init__()
+        for idx, module in enumerate(args):
+            self.__setattr__(str(idx), module)
+
+    def forward(self, input_tensor):
+        for module in self._modules.values():
+            input_tensor = module(input_tensor)
+        return input_tensor
+
+
 class Linear(Module):
     """Applies a linear transformation to the incoming data: y = xA^T + b
     types of activation relu,leaky_relu, gelu, sigmoid, tanh, silu,elu"""
