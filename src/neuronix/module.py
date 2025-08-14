@@ -1122,3 +1122,184 @@ class Swish(Module):
         grad_B = input_tensor.square() * common
         grad_B = grad_B.sum()
         return grad_input, grad_B
+class Partial_Conv_2d(Module):
+    _ACTIVATION_INIT = {
+        "relu": ("kaiming_uniform_", "relu"),
+        "gelu": ("kaiming_uniform_", "relu"),
+        "silu": ("kaiming_uniform_", "relu"),
+        "elu": ("kaiming_uniform_", "relu"),
+        "gelu_approx": ("kaiming_uniform_", "relu"),
+        "leaky_relu": ("kaiming_uniform_", "leaky_relu"),
+        "sigmoid": ("xavier_uniform_", 1.0),
+        "tanh": ("xavier_uniform_", 5/3)
+    }
+    __slots__ = ('in_channels', 'channels_conv', 'channels_untouched', 'graph',
+                 'weight', 'kernel_size', 'padding', 'dilation', '__weakref__')
+
+    def __init__(self, *, in_channels, n_div, kernel_size=3, dilation=1, graph=None, activation="relu"):
+        super().__init__()
+        if in_channels % n_div != 0:
+            raise ValueError("in_channels must be divisible by n_div")
+        
+        self.in_channels = in_channels
+        self.channels_conv = in_channels // n_div
+        self.channels_untouched = in_channels - self.channels_conv
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.dilation = (dilation, dilation) if isinstance(dilation, int) else dilation
+        # Stride is Fundamentally a downsampling operation while mathematically padding can be adjusted for arbritary stride to preserve the overall shape, logically it is inconsistent with what we are trying to do 
+        padding_h = (self.dilation[0] * (self.kernel_size[0] - 1)) // 2
+        padding_w = (self.dilation[1] * (self.kernel_size[1] - 1)) // 2
+        self.padding = (padding_h, padding_w)   
+
+        
+        self.graph = weakref.proxy(graph) if graph is not None else None
+        
+        # Weight shape is for the partial convolution
+        weight_shape = (self.channels_conv, self.channels_conv, *self.kernel_size)
+        self.weight = CustomTensor(torch.empty(weight_shape), _custom_requires_grad=True if graph is not None else False,
+            graph=graph if graph is not None else None, is_leaf=True)
+
+        # Initialize weight
+        init_method, init_param = self._ACTIVATION_INIT[activation]
+        if init_method == "kaiming_uniform_":
+            torch.nn.init.kaiming_uniform_(self.weight.tensor, nonlinearity=init_param)
+        else:
+            torch.nn.init.xavier_uniform_(self.weight.tensor, gain=init_param)
+
+    def forward(self, input_tensor):
+        x_conv, x_untouched = torch.split(input_tensor.tensor, 
+                                          [self.channels_conv, self.channels_untouched], dim=1)
+        y_conv = F.conv2d(
+            input=x_conv,
+            weight=self.weight.tensor,
+            bias=None,
+            padding=self.padding,
+            dilation=self.dilation
+
+        )
+        
+        output_tensor = torch.cat((y_conv, x_untouched), dim=1)
+        
+        if not self.training:
+            return CustomTensor(output_tensor, due_to_operation=True)
+
+        result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph, due_to_operation=True, is_leaf=False)
+        
+        if input_tensor._custom_requires_grad: self.graph.add_edge(input_tensor._node_id, result._node_id)
+        if self.weight._custom_requires_grad: self.graph.add_edge(self.weight._node_id, result._node_id)
+        
+        refs = {'input': weakref.proxy(input_tensor),
+                'weight': weakref.proxy(self.weight),
+                'result': weakref.proxy(result)}
+                
+        result._backward = self._create_backward(refs)
+        return result
+
+    def _create_backward(self, refs):
+        def _backward():
+            input_ref, weight_ref, result_ref = refs['input'], refs['weight'], refs['result']
+            grad_output = result_ref.tensor.grad
+
+            grad_output_conv, grad_output_untouched = torch.split(
+                grad_output, [self.channels_conv, self.channels_untouched], dim=1
+            )
+            
+          
+            x_conv, _ = torch.split(
+                input_ref.tensor, [self.channels_conv, self.channels_untouched], dim=1
+            )
+
+            if weight_ref._custom_requires_grad:
+                if weight_ref.tensor.grad is None: weight_ref._zero_grad()
+                
+                grad_w = Partial_Conv_2d._calculate_gradient_weight_tensor(
+                    input_tensor =x_conv,
+                    grad_output=grad_output_conv,
+                    padding=self.padding,
+                    dilation=self.dilation
+                )
+
+                weight_ref.tensor.grad.add_(grad_w)
+
+
+            if input_ref._custom_requires_grad:
+                if input_ref.tensor.grad is None: input_ref._zero_grad()
+                grad_input_conv = Partial_Conv_2d._calculate_gradient_input_tensor(
+                    input_tensor=x_conv,
+                    weight_tensor=weight_ref.tensor,
+                    grad_output=grad_output_conv,
+                    padding=self.padding,
+                    kernel_size=self.kernel_size,
+                    dilation=self.dilation
+                )
+                
+
+                final_grad_input = torch.cat((grad_input_conv, grad_output_untouched), dim=1)
+                input_ref.tensor.grad.add_(final_grad_input)
+
+        return _backward
+    @staticmethod
+    #@torch.compile
+    def _calculate_gradient_input_tensor(input_tensor,weight_tensor,grad_output,padding,kernel_size,dilation):
+        h_in, w_in = input_tensor.shape[2], input_tensor.shape[3]
+        h_out, w_out = grad_output.shape[2], grad_output.shape[3]
+        # groups and stride are 1 for a partial convolution
+        # The formula relating input size to output size in a transposed convolution is:
+        # InputSize = (OutputSize - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
+        # We rearrange this to solve for the required output_padding.
+        output_padding_h = h_in - ((h_out - 1) - 2 * padding[0] + dilation[0] * (kernel_size[0] - 1) + 1)
+        output_padding_w = w_in - ((w_out - 1) - 2 * padding[1] + dilation[1] * (kernel_size[1] - 1) + 1)
+        output_padding = (output_padding_h, output_padding_w)
+
+        grad_input = F.conv_transpose2d(
+            grad_output,
+            weight_tensor,
+            padding=padding,
+            output_padding=output_padding,
+            dilation=dilation
+        )
+        return grad_input
+    @staticmethod
+    #@torch.compile
+    def _calculate_gradient_weight_tensor(input_tensor,grad_output,padding,dilation):
+        #The gradient w.r.t. the weights is a convolution
+        # of the input (X) and the output gradient (grad_output).
+        # groups and stride are 1 for a partial convolution
+        #O(b,co,oh,ow)=B(co)+ kh =0∑KH −1  kw =0∑KW −1  ci=(co/G)⋅(Cin/G)∑((co/G)+1)⋅(Cin/G)−1
+        #  Ipadded(b,ci,ih,iw)K(co ,ci ,kh ,kw ),
+        # where ih  = oh.sh+kh.dh, iw = ow.sw+kw.dw
+
+        # ∂L/∂K(ci′ ,co′ ,kh′ ,kw′ ) =b,oh,ow∑ G(b,co',oh,ow)
+        # Ipadded(b,ci', oh.sh + kh'.dh, ow.sw + kw'.dw)
+
+        # the original operation is a summation over kh and kw and the input image
+        # coordinates ih iw are sampled with dilation. (oh and ow for individual coordinates are constant)
+        # the equation for the gradient is a summation over oh and ow and the input image
+        # coordinates ih iw are sampled with stride.
+        # (kh and kw are constant for individual coordinates are constant)
+
+        # hence when calling conv2d we need to switch stride and dilation
+        # and also transpose the dimensions of batch and channel as for derivative with respect to weight the channels are fixed in the summation
+
+        # To calculate the weight gradient via a convolution, we must cleverly
+        # permute the input (X) and output gradient (grad_output) tensors.
+        # We treat X as the input and grad_output as the kernel.
+        # X: (N, Cin, H, W) -> permute -> (Cin, N, H, W)
+        # grad_output: (N, Cout, oH, oW) -> permute -> (Cout, N, oH, oW)
+        # The F.conv2d call then treats 'Cin' as the batch size and 'N' as the input channels.
+        # The stride and dilation parameters from the original convolution are swapped.
+        X_permuted = input_tensor.transpose(0,1)
+        grad_output_permuted = grad_output.transpose(0,1)
+
+        grad_W_permuted = F.conv2d(
+            X_permuted,
+            grad_output_permuted,
+            stride = dilation,
+            padding = padding,
+            dilation = (1,1)
+        )
+        # The result has shape (Cin, Cout, kH, kW). We must permute it back to
+        # the standard weight layout of (Cout, Cin, kH, kW).
+        grad_W = grad_W_permuted.transpose(0,1)
+        return grad_W
+    
