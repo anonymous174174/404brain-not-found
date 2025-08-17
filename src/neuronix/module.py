@@ -151,7 +151,8 @@ class Sequential(Module):
     Modules are added in the order they are passed to the constructor. The output
     of each module is passed as the input to the next.
     """
-    __slots__ = ()  
+    # slots is removed because sequential itself will have these attributes for access and to be consistent with pytorch
+    #__slots__ = ()  
     def __init__(self, *args):
         super().__init__()
         for idx, module in enumerate(args):
