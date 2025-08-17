@@ -1321,3 +1321,64 @@ class Partial_Conv_2d(Module):
         grad_W = grad_W_permuted.transpose(0,1)
         return grad_W
     
+# NOT TESTED TODO TEST THIS 
+# Note this is only effective for Linear to Linear connected Layers for Convolution this is not the correct implementation
+# class Dropout(Module):
+#     """
+#     During training, randomly zeroes some of the elements of the input
+#     tensor with probability p.
+#     """
+#     __slots__ = ('p', 'graph', '__weakref__')
+
+#     def __init__(self, p: float = 0.5, *, graph=None):
+#         super().__init__()
+#         if not 0.0 <= p < 1.0:
+#             raise ValueError("Dropout probability has to be in range [0, 1)")
+#         self.p = p
+#         self.graph = weakref.proxy(graph) if graph is not None else None
+
+#     def forward(self, input_tensor):
+#         # --- During evaluation, Dropout does nothing ---
+#         if not self.training:
+#             return input_tensor
+
+#         # --- Forward pass for training ---
+        
+#         # 1. Create a binary mask. No reshaping is needed.
+#         # Note: We divide by (1 - p) to scale up the activations, which is
+#         # the standard "inverted dropout" technique.
+#         scale_factor = 1.0 / (1.0 - self.p)
+#         mask = (torch.rand_like(input_tensor.tensor) > self.p).to(input_tensor.tensor.dtype)
+        
+#         # 2. Apply the mask and scale the output
+#         output_tensor = input_tensor.tensor * mask * scale_factor
+
+#         # --- Autograd setup ---
+#         result = CustomTensor(output_tensor, _custom_requires_grad=True, graph=self.graph,
+#                               due_to_operation=True, is_leaf=False)
+        
+#         if input_tensor._custom_requires_grad:
+#             self.graph.add_edge(input_tensor._node_id, result._node_id)
+        
+#         result._backward = self._create_backward(input_tensor, result, mask, scale_factor)
+        
+#         return result
+
+#     def _create_backward(self, input_tensor, result, cached_mask, cached_scale_factor):
+#         """Creates the _backward hook, caching the mask and scale factor."""
+#         input_ref = weakref.proxy(input_tensor)
+#         result_ref = weakref.proxy(result)
+        
+#         def _backward():
+#             if input_ref._custom_requires_grad:
+#                 if input_ref.tensor.grad is None:
+#                     input_ref._zero_grad()
+                
+#                 grad_output = result_ref.tensor.grad
+                
+#                 # Apply the exact same mask and scaling to the gradient
+#                 grad_input = grad_output * cached_mask * cached_scale_factor
+                
+#                 input_ref.tensor.grad.add_(grad_input)
+
+#         return _backward
